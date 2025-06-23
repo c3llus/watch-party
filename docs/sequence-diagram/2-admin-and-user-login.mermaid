@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant U as User
+    participant API as api-service
+    participant DB as PostgreSQL
+    participant Cache as Redis
+
+    U->>API: POST /auth/login (email, password)
+    API->>API: Validate input
+    API->>DB: SELECT id, password_hash, role FROM users WHERE email = ?
+    DB-->>API: User record
+    API->>API: Verify password against hash
+    alt Credentials are valid
+        API->>API: Generate JWT (access token) & Refresh Token
+        API->>Cache: STORE refresh_token_hash
+        API-->>U: HTTP 200 OK (access_token, refresh_token, user_profile)
+    else Credentials are invalid
+        API-->>U: HTTP 401 Unauthorized
+    end

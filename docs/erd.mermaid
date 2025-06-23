@@ -1,0 +1,33 @@
+erDiagram
+    users {
+        string id PK "UUID, PK"
+        string email UK "Unique"
+        string password_hash
+        string role "e.g., 'user', 'admin'"
+        datetime created_at
+    }
+    movies {
+        string id PK "UUID, PK"
+        string title
+        string description
+        string gcs_object_path "Path to video file in GCS"
+        int duration_seconds
+    }
+    rooms {
+        string id PK "UUID, PK"
+        string movie_id FK "FK to movies"
+        string host_id FK "FK to users"
+        datetime created_at
+    }
+    room_access {
+        string user_id PK, FK "Composite PK, FK to users"
+        string room_id PK, FK "Composite PK, FK to rooms"
+        string access_type "granted | guest"
+        datetime granted_at
+    }
+
+
+    users ||--o{ room_access : "is member of"
+    rooms ||--|{ room_access : "has"
+    rooms }|--|| movies : "is playing"
+    users ||--|{ rooms : "is host of"

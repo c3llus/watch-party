@@ -1,0 +1,11 @@
+sequenceDiagram
+    participant U as User (Admin)
+    participant API as api-service
+    participant DB as PostgreSQL
+
+    U->>API: POST /admin/register (email, password)
+    API->>API: Validate input
+    API->>API: Hash password (bcrypt)
+    API->>DB: INSERT INTO users (email, password_hash, role) VALUES (..., ..., 'admin')
+    DB-->>API: Confirm user creation
+    API-->>U: HTTP 201 Created

@@ -1,0 +1,37 @@
+graph TD
+    subgraph UserBrowser["User's Browser"]
+        User["End User"]
+    end
+
+    subgraph GCP["Google Cloud Platform (GCP)"]
+        API_Service["
+            API Service (Go/Gin)
+            Handles HTTP: Auth, Movie CRUD, Room Creation
+        "]
+        Sync_Service["
+            Sync Service (Go/Gorilla-WebSocket)
+            Handles Real-time Sync & Playback State
+        "]
+        
+        PostgreSQL["
+            Cloud SQL for PostgreSQL
+            Stores Users, Movies, Rooms
+        "]
+        Redis["
+            Memorystore for Redis
+            Caches Sessions, Manages Room State
+        "]
+        GCS["
+                Cloud Storage
+                Stores Video Files
+        "]
+    end
+
+    User --> API_Service
+    User --> Sync_Service
+
+    API_Service --> PostgreSQL
+    API_Service --> Redis
+    API_Service --> GCS
+
+    Sync_Service --> Redis

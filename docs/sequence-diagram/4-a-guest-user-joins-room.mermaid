@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant Guest as Guest Client
+    participant Host as Host Client
+    participant Sync as sync-service
+
+    Guest->>Sync: WebSocket Upgrade Request to /ws/room/{roomId}?guestName=John
+    Note over Guest, Sync: No JWT is sent
+    Sync->>Sync: Identify as guest
+    Sync->>Sync: Hold connection in 'pending' state
+    Sync->>Host: SEND {"type": "GUEST_REQUEST", "payload": {"guestId": "temp123", "name": "John"}}
+
+    Host->>Host: UI shows "John wants to join. [Admit]"
+    Host->>Sync: SEND {"type": "ADMIT_GUEST", "payload": {"guestId": "temp123"}}
+    Sync->>Sync: Validate host sent admit command
+    Sync->>Sync: Promote guest connection to 'participant'
+    Sync-->>Guest: WebSocket Connection Fully Established
+    Sync->>Guest: SEND {"type": "ROOM_STATE", "payload": ...}
+    Sync->>Host: BROADCAST {"type": "USER_JOINED", "payload": {"name": "John"}}

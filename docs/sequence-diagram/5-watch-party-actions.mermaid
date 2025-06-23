@@ -1,0 +1,9 @@
+sequenceDiagram
+    participant Host as Host Client
+    participant P as Participant Client
+    participant Sync as sync-service
+
+    Host->>Sync: SEND {"type": "PLAY", "payload": {"timestamp": 12345}}
+    Sync->>Sync: Validate sender is the room's host
+    alt Sender is Host
+        Sync->>Sync: Update authoritative room state (isPlaying: true)
