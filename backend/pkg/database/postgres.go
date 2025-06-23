@@ -6,7 +6,14 @@ import (
 	"fmt"
 	"time"
 	"watch-party/pkg/config"
+
+	_ "github.com/lib/pq" // PostgreSQL driver
 )
+
+// NewPgDB creates a new PostgreSQL database connection
+func NewPgDB(cfg *config.Config) (*sql.DB, error) {
+	return newPgDB(cfg)
+}
 
 func newPgDB(
 	cfg *config.Config,

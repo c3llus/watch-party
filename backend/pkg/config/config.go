@@ -54,6 +54,7 @@ func NewConfig() *Config {
 			MaxOpenConns:    parseInt("DB_MAX_OPEN_CONNS"),
 			MaxIdleConns:    parseInt("DB_MAX_IDLE_CONNS"),
 			ConnMaxLifetime: parseDuration("DB_CONN_MAX_LIFETIME"),
+			SSLMode:         getOptionalSecret("DB_SSL_MODE", "disable"),
 		},
 		Log: LogConfig{
 			Level: getOptionalSecret("LOG_LEVEL", "info"),
