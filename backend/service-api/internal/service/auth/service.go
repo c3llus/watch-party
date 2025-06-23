@@ -47,7 +47,7 @@ func NewAuthService(
 
 // Login authenticates a user and returns tokens
 func (s *authService) Login(req *model.LoginRequest) (*model.LoginResponse, error) {
-	// Get user by email
+	// get user by email
 	user, err := s.userService.GetUserByEmail(req.Email)
 	if err != nil {
 		if err == userService.ErrUserNotFound {
@@ -56,13 +56,13 @@ func (s *authService) Login(req *model.LoginRequest) (*model.LoginResponse, erro
 		return nil, err
 	}
 
-	// Verify password
+	// verify password
 	err = userRepo.VerifyPassword(user.PasswordHash, req.Password)
 	if err != nil {
 		return nil, ErrInvalidCredentials
 	}
 
-	// Generate tokens
+	// generate tokens
 	accessToken, err := s.jwtManager.GenerateAccessToken(user)
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func (s *authService) Login(req *model.LoginRequest) (*model.LoginResponse, erro
 		return nil, err
 	}
 
-	// Store refresh token hash in database
+	// store refresh token hash in database
 	refreshTokenHash := hashToken(refreshToken)
 	expiresAt := time.Now().Add(time.Hour * 24 * 7) // 7 days
 	err = s.authRepo.StoreRefreshToken(user.ID, refreshTokenHash, expiresAt)

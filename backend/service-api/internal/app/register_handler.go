@@ -65,6 +65,18 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 		adminRoutes.GET("/my-movies", a.movieController.GetMyMovies)
 	}
 
+	// Authenticated user routes
+	userRoutes := api.Group("")
+	userRoutes.Use(authMiddleware)
+	{
+		// Room management - authenticated users
+		userRoutes.POST("/rooms", a.roomController.CreateRoom)
+		userRoutes.GET("/rooms/:id", a.roomController.GetRoom)
+		userRoutes.POST("/rooms/:id/invite", a.roomController.InviteUser)
+		userRoutes.POST("/rooms/join", a.roomController.JoinRoom)
+		userRoutes.GET("/rooms/join", a.roomController.JoinRoomByToken)
+	}
+
 	// File serving for local storage (if needed)
 	// This will serve files from the uploads directory for local storage
 	if a.config.Storage.Provider == "local" {

@@ -10,15 +10,18 @@ import (
 	"syscall"
 	"watch-party/pkg/config"
 	"watch-party/pkg/database"
+	"watch-party/pkg/email"
 	"watch-party/pkg/logger"
 	"watch-party/pkg/storage"
 	mdw "watch-party/service-api/internal/app/middleware"
 	ctl "watch-party/service-api/internal/controller"
 	authRepo "watch-party/service-api/internal/repository/auth"
 	movieRepo "watch-party/service-api/internal/repository/movie"
+	roomRepo "watch-party/service-api/internal/repository/room"
 	userRepo "watch-party/service-api/internal/repository/user"
 	authService "watch-party/service-api/internal/service/auth"
 	movieService "watch-party/service-api/internal/service/movie"
+	roomService "watch-party/service-api/internal/service/room"
 	userService "watch-party/service-api/internal/service/user"
 )
 
@@ -27,6 +30,7 @@ type appServer struct {
 	middleware      mdw.MiddlewareProvider
 	controller      ctl.ControllerProvider
 	movieController *ctl.MovieController
+	roomController  *ctl.RoomController
 }
 
 // NewAppServer creates a new instance of appServer with the provided configuration, middleware, and controller.
@@ -47,15 +51,24 @@ func NewAppServer(cfg *config.Config) *appServer {
 	userRepository := userRepo.NewRepository(db)
 	authRepository := authRepo.NewRepository(db)
 	movieRepository := movieRepo.NewRepository(db)
+	roomRepository := roomRepo.NewRepository(db)
+
+	// shared pkgs
+	emailService, err := email.NewEmailProvider(context.Background(), &cfg.Email)
+	if err != nil {
+		logger.Fatalf("failed to initialize email provider: %v", err)
+	}
 
 	// initialize services
 	userSvc := userService.NewUserService(userRepository)
 	authSvc := authService.NewAuthService(cfg, userSvc, authRepository)
 	movieSvc := movieService.NewMovieService(movieRepository, storageProvider)
+	roomSvc := roomService.NewService(roomRepository, userRepository, emailService, cfg)
 
 	// initialize controllers
 	controller := ctl.NewController(authSvc)
 	movieController := ctl.NewMovieController(movieSvc)
+	roomController := ctl.NewRoomController(roomSvc)
 
 	// initialize middleware
 	middleware := mdw.NewMiddleware()
@@ -65,6 +78,7 @@ func NewAppServer(cfg *config.Config) *appServer {
 		middleware:      middleware,
 		controller:      controller,
 		movieController: movieController,
+		roomController:  roomController,
 	}
 }
 
@@ -76,7 +90,8 @@ func (a *appServer) Serve() {
 
 	// serve the server
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		err := server.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server failed to start: %v", err)
 		}
 	}()
@@ -97,7 +112,8 @@ func (a *appServer) gracefulShutdown(server *http.Server) {
 		<-signals
 
 		// we received an os signal, shut down.
-		if err := server.Shutdown(ctx); err != nil {
+		err := server.Shutdown(ctx)
+		if err != nil {
 			logger.Error(err, "server shutdown error")
 		} else {
 			logger.Info("server graceful shutdown")

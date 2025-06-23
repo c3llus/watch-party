@@ -31,31 +31,33 @@ func NewGCSProvider(ctx context.Context, bucketName string) (*GCSProvider, error
 
 // Upload uploads a file to Google Cloud Storage
 func (g *GCSProvider) Upload(ctx context.Context, file *multipart.FileHeader, filename string) (string, error) {
-	// Open the uploaded file
+	// open the uploaded file
 	src, err := file.Open()
 	if err != nil {
 		return "", fmt.Errorf("failed to open uploaded file: %w", err)
 	}
 	defer src.Close()
 
-	// Get a reference to the GCS object
+	// get a reference to the GCS object
 	obj := g.client.Bucket(g.bucket).Object(filename)
 
-	// Create a writer to the GCS object
+	// create a writer to the GCS object
 	writer := obj.NewWriter(ctx)
 	writer.ContentType = file.Header.Get("Content-Type")
 	if writer.ContentType == "" {
 		writer.ContentType = getContentType(filename)
 	}
 
-	// Copy the file to GCS
-	if _, err := io.Copy(writer, src); err != nil {
+	// copy the file to GCS
+	_, err = io.Copy(writer, src)
+	if err != nil {
 		writer.Close()
 		return "", fmt.Errorf("failed to copy file to GCS: %w", err)
 	}
 
-	// Close the writer to finalize the upload
-	if err := writer.Close(); err != nil {
+	// close the writer to finalize the upload
+	err = writer.Close()
+	if err != nil {
 		return "", fmt.Errorf("failed to close GCS writer: %w", err)
 	}
 
@@ -64,7 +66,7 @@ func (g *GCSProvider) Upload(ctx context.Context, file *multipart.FileHeader, fi
 
 // GetSignedURL returns a signed URL for accessing the file
 func (g *GCSProvider) GetSignedURL(ctx context.Context, path string) (string, error) {
-	// Generate a signed URL valid for 1 hour
+	// generate a signed URL valid for 1 hour
 	opts := &storage.SignedURLOptions{
 		Scheme:  storage.SigningSchemeV4,
 		Method:  "GET",
@@ -82,7 +84,8 @@ func (g *GCSProvider) GetSignedURL(ctx context.Context, path string) (string, er
 // Delete deletes a file from Google Cloud Storage
 func (g *GCSProvider) Delete(ctx context.Context, path string) error {
 	obj := g.client.Bucket(g.bucket).Object(path)
-	if err := obj.Delete(ctx); err != nil {
+	err := obj.Delete(ctx)
+	if err != nil {
 		return fmt.Errorf("failed to delete object from GCS: %w", err)
 	}
 	return nil

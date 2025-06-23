@@ -17,7 +17,7 @@ func AuthMiddleware(jwtManager *JWTManager) gin.HandlerFunc {
 			return
 		}
 
-		// Extract Bearer token
+		// extract Bearer token
 		bearerToken := strings.Split(authHeader, " ")
 		if len(bearerToken) != 2 || bearerToken[0] != "Bearer" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header format"})
@@ -33,7 +33,8 @@ func AuthMiddleware(jwtManager *JWTManager) gin.HandlerFunc {
 			return
 		}
 
-		// Store user info in context
+		// store user claims in context
+		c.Set("user", claims)
 		c.Set("user_id", claims.UserID)
 		c.Set("user_email", claims.Email)
 		c.Set("user_role", claims.Role)

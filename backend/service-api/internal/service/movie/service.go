@@ -59,23 +59,24 @@ func NewMovieService(movieRepo movieRepo.Repository, storageProvider storage.Pro
 
 // UploadMovie uploads a movie file and stores its metadata
 func (s *movieService) UploadMovie(ctx context.Context, req *model.UploadMovieRequest, file *multipart.FileHeader, uploaderID uuid.UUID) (*model.Movie, error) {
-	// Validate file
-	if err := s.validateFile(file); err != nil {
+	// validate file
+	err := s.validateFile(file)
+	if err != nil {
 		return nil, err
 	}
 
-	// Generate unique filename
+	// generate unique filename
 	ext := filepath.Ext(file.Filename)
 	filename := fmt.Sprintf("%s_%d%s", uuid.New().String(), time.Now().Unix(), ext)
 
-	// Upload file to storage
+	// upload file to storage
 	storagePath, err := s.storageProvider.Upload(ctx, file, filename)
 	if err != nil {
 		logger.Error(err, "failed to upload movie file")
 		return nil, fmt.Errorf("failed to upload file: %w", err)
 	}
 
-	// Create movie record
+	// create movie record
 	movie := &model.Movie{
 		ID:              uuid.New(),
 		Title:           req.Title,
@@ -89,10 +90,12 @@ func (s *movieService) UploadMovie(ctx context.Context, req *model.UploadMovieRe
 		CreatedAt:       time.Now(),
 	}
 
-	// Save to database
-	if err := s.movieRepo.Create(movie); err != nil {
-		// If database save fails, try to cleanup uploaded file
-		if deleteErr := s.storageProvider.Delete(ctx, storagePath); deleteErr != nil {
+	// save to database
+	err = s.movieRepo.Create(movie)
+	if err != nil {
+		// if database save fails, try to cleanup uploaded file
+		deleteErr := s.storageProvider.Delete(ctx, storagePath)
+		if deleteErr != nil {
 			logger.Error(deleteErr, "failed to cleanup uploaded file after database error")
 		}
 		return nil, fmt.Errorf("failed to save movie metadata: %w", err)
@@ -162,7 +165,7 @@ func (s *movieService) GetMoviesByUploader(ctx context.Context, uploaderID uuid.
 
 // UpdateMovie updates a movie's metadata
 func (s *movieService) UpdateMovie(ctx context.Context, id uuid.UUID, req *model.UploadMovieRequest) (*model.Movie, error) {
-	// Check if movie exists
+	// check if movie exists
 	movie, err := s.movieRepo.GetByID(id)
 	if err != nil {
 		return nil, err
@@ -171,12 +174,13 @@ func (s *movieService) UpdateMovie(ctx context.Context, id uuid.UUID, req *model
 		return nil, ErrMovieNotFound
 	}
 
-	// Update movie fields
+	// update movie fields
 	movie.Title = req.Title
 	movie.Description = req.Description
 
-	// Save updates
-	if err := s.movieRepo.Update(movie); err != nil {
+	// save updates
+	err = s.movieRepo.Update(movie)
+	if err != nil {
 		return nil, err
 	}
 
@@ -185,7 +189,7 @@ func (s *movieService) UpdateMovie(ctx context.Context, id uuid.UUID, req *model
 
 // DeleteMovie deletes a movie and its associated file
 func (s *movieService) DeleteMovie(ctx context.Context, id uuid.UUID) error {
-	// Get movie details
+	// get movie details
 	movie, err := s.movieRepo.GetByID(id)
 	if err != nil {
 		return err
@@ -194,15 +198,17 @@ func (s *movieService) DeleteMovie(ctx context.Context, id uuid.UUID) error {
 		return ErrMovieNotFound
 	}
 
-	// Delete from database first
-	if err := s.movieRepo.Delete(id); err != nil {
+	// delete from database first
+	err = s.movieRepo.Delete(id)
+	if err != nil {
 		return err
 	}
 
-	// Delete file from storage
-	if err := s.storageProvider.Delete(ctx, movie.StoragePath); err != nil {
+	// delete file from storage
+	err = s.storageProvider.Delete(ctx, movie.StoragePath)
+	if err != nil {
 		logger.Error(err, "failed to delete movie file from storage")
-		// Don't return error here as the database record is already deleted
+		// don't return error here as the database record is already deleted
 	}
 
 	logger.Infof("movie deleted successfully: %s (ID: %s)", movie.Title, id)
@@ -219,7 +225,7 @@ func (s *movieService) GetMovieStreamURL(ctx context.Context, id uuid.UUID) (str
 		return "", ErrMovieNotFound
 	}
 
-	// Get signed URL from storage provider
+	// get signed URL from storage provider
 	url, err := s.storageProvider.GetSignedURL(ctx, movie.StoragePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate stream URL: %w", err)
@@ -234,13 +240,13 @@ func (s *movieService) validateFile(file *multipart.FileHeader) error {
 		return ErrInvalidFile
 	}
 
-	// Check file extension
+	// check file extension
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 	if !supportedFormats[ext] {
 		return ErrUnsupportedFormat
 	}
 
-	// Check file size (max 5GB)
+	// check file size (max 5GB)
 	const maxFileSize = 5 * 1024 * 1024 * 1024 // 5GB
 	if file.Size > maxFileSize {
 		return fmt.Errorf("file size too large: %d bytes (max: %d bytes)", file.Size, maxFileSize)
@@ -271,7 +277,7 @@ func (s *movieService) getMimeType(ext string) string {
 
 // getStorageProviderType returns the storage provider type
 func (s *movieService) getStorageProviderType() string {
-	// This is a simplified approach - in a real implementation,
+	// this is a simplified approach - in a real implementation,
 	// you might want to pass this information to the service
 	return model.StorageProviderLocal // Default
 }

@@ -13,6 +13,7 @@ type Config struct {
 	Database  DatabaseConfig `json:"database"`
 	Log       LogConfig      `json:"log"`
 	Storage   StorageConfig  `json:"storage"`
+	Email     EmailConfig    `json:"email"`
 }
 
 type DatabaseConfig struct {
@@ -37,6 +38,32 @@ type StorageConfig struct {
 	LocalPath          string `mapstructure:"storage_local_path"`
 	GCSBucket          string `mapstructure:"storage_gcs_bucket"`
 	GCSCredentialsPath string `mapstructure:"storage_gcs_credentials_path"`
+}
+
+type EmailConfig struct {
+	Provider  string              `mapstructure:"email_provider"`
+	SMTP      SMTPConfig          `mapstructure:"smtp"`
+	SendGrid  SendGridConfig      `mapstructure:"sendgrid"`
+	Templates EmailTemplateConfig `mapstructure:"templates"`
+}
+
+type SMTPConfig struct {
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
+	UseTLS   bool   `mapstructure:"use_tls"`
+}
+
+type SendGridConfig struct {
+	APIKey    string `mapstructure:"api_key"`
+	FromEmail string `mapstructure:"from_email"`
+	FromName  string `mapstructure:"from_name"`
+}
+
+type EmailTemplateConfig struct {
+	BaseURL string `mapstructure:"base_url"`
+	AppName string `mapstructure:"app_name"`
 }
 
 func init() {
@@ -72,6 +99,25 @@ func NewConfig() *Config {
 			LocalPath:          getOptionalSecret("STORAGE_LOCAL_PATH", "./uploads"),
 			GCSBucket:          getOptionalSecret("STORAGE_GCS_BUCKET", ""),
 			GCSCredentialsPath: getOptionalSecret("STORAGE_GCS_CREDENTIALS_PATH", ""),
+		},
+		Email: EmailConfig{
+			Provider: getOptionalSecret("EMAIL_PROVIDER", "smtp"),
+			SMTP: SMTPConfig{
+				Host:     getOptionalSecret("EMAIL_SMTP_HOST", ""),
+				Port:     parseOptionalInt("EMAIL_SMTP_PORT", 587),
+				Username: getOptionalSecret("EMAIL_SMTP_USERNAME", ""),
+				Password: getOptionalSecret("EMAIL_SMTP_PASSWORD", ""),
+				UseTLS:   parseBool("EMAIL_SMTP_USE_TLS"),
+			},
+			SendGrid: SendGridConfig{
+				APIKey:    getOptionalSecret("EMAIL_SENDGRID_API_KEY", ""),
+				FromEmail: getOptionalSecret("EMAIL_SENDGRID_FROM_EMAIL", ""),
+				FromName:  getOptionalSecret("EMAIL_SENDGRID_FROM_NAME", ""),
+			},
+			Templates: EmailTemplateConfig{
+				BaseURL: getOptionalSecret("EMAIL_TEMPLATE_BASE_URL", "http://localhost:3000"),
+				AppName: getOptionalSecret("EMAIL_TEMPLATE_APP_NAME", "WatchParty"),
+			},
 		},
 	}
 }

@@ -64,3 +64,25 @@ func parseDuration(key string) time.Duration {
 	}
 	return val
 }
+
+// parseBool is a helper func to parse a boolean from a secret.
+func parseBool(key string) bool {
+	val := getOptionalSecret(key, "false")
+	parsed, err := strconv.ParseBool(val)
+	if err != nil {
+		log.Printf("WARNING: Invalid boolean value for secret %q, defaulting to false: %v", key, err)
+		return false
+	}
+	return parsed
+}
+
+// parseOptionalInt is a helper func to parse an optional integer from a secret with default value.
+func parseOptionalInt(key string, defaultValue int) int {
+	val := getOptionalSecret(key, strconv.Itoa(defaultValue))
+	parsed, err := strconv.Atoi(val)
+	if err != nil {
+		log.Printf("WARNING: Invalid integer value for secret %q, using default %d: %v", key, defaultValue, err)
+		return defaultValue
+	}
+	return parsed
+}

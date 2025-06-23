@@ -11,7 +11,8 @@ import (
 // RegisterAdmin handles admin registration
 func (ctrl *controller) RegisterAdmin(c *gin.Context) {
 	var req model.RegisterRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	err := c.ShouldBindJSON(&req)
+	if err != nil {
 		logger.Error(err, "failed to bind register request")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
 		return

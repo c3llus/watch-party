@@ -75,7 +75,8 @@ func (j *JWTManager) GenerateRefreshToken(user *model.User) (string, error) {
 // ValidateToken validates and parses a JWT token
 func (j *JWTManager) ValidateToken(tokenString string) (*JWTClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+		_, ok := token.Method.(*jwt.SigningMethodHMAC)
+		if !ok {
 			return nil, ErrInvalidToken
 		}
 		return []byte(j.secretKey), nil

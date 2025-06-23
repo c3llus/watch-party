@@ -18,8 +18,9 @@ type LocalProvider struct {
 
 // NewLocalProvider creates a new local storage provider
 func NewLocalProvider(basePath, baseURL string) *LocalProvider {
-	// Ensure the base path exists
-	if err := os.MkdirAll(basePath, 0755); err != nil {
+	// ensure the base path exists
+	err := os.MkdirAll(basePath, 0755)
+	if err != nil {
 		panic(fmt.Sprintf("failed to create storage directory: %v", err))
 	}
 
@@ -31,40 +32,42 @@ func NewLocalProvider(basePath, baseURL string) *LocalProvider {
 
 // Upload uploads a file to the local filesystem
 func (l *LocalProvider) Upload(ctx context.Context, file *multipart.FileHeader, filename string) (string, error) {
-	// Open the uploaded file
+	// open the uploaded file
 	src, err := file.Open()
 	if err != nil {
 		return "", fmt.Errorf("failed to open uploaded file: %w", err)
 	}
 	defer src.Close()
 
-	// Create the full path
+	// create the full path
 	fullPath := filepath.Join(l.basePath, filename)
 
-	// Ensure the directory exists
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+	// ensure the directory exists
+	err = os.MkdirAll(filepath.Dir(fullPath), 0755)
+	if err != nil {
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Create the destination file
+	// create the destination file
 	dst, err := os.Create(fullPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to create file: %w", err)
 	}
 	defer dst.Close()
 
-	// Copy the file content
-	if _, err := io.Copy(dst, src); err != nil {
+	// copy the file content
+	_, err = io.Copy(dst, src)
+	if err != nil {
 		return "", fmt.Errorf("failed to copy file: %w", err)
 	}
 
-	// Return the relative path
+	// return the relative path
 	return filename, nil
 }
 
 // GetSignedURL returns a URL for accessing the file
 func (l *LocalProvider) GetSignedURL(ctx context.Context, path string) (string, error) {
-	// For local storage, we return a direct URL
+	// for local storage, we return a direct URL
 	return fmt.Sprintf("%s/%s", l.baseURL, path), nil
 }
 

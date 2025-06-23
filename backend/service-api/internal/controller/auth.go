@@ -11,7 +11,8 @@ import (
 // Login handles user authentication
 func (ctrl *controller) Login(c *gin.Context) {
 	var req model.LoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	err := c.ShouldBindJSON(&req)
+	if err != nil {
 		logger.Error(err, "failed to bind login request")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
 		return
@@ -43,13 +44,14 @@ func (ctrl *controller) Logout(c *gin.Context) {
 	}
 
 	var req LogoutRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	err := c.ShouldBindJSON(&req)
+	if err != nil {
 		logger.Error(err, "failed to bind logout request")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
 		return
 	}
 
-	err := ctrl.authService.Logout(req.RefreshToken)
+	err = ctrl.authService.Logout(req.RefreshToken)
 	if err != nil {
 		logger.Error(err, "failed to logout user")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})

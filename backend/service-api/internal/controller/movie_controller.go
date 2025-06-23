@@ -26,7 +26,7 @@ func NewMovieController(movieService movieService.Service) *MovieController {
 
 // UploadMovie handles movie upload - ADMIN ONLY
 func (mc *MovieController) UploadMovie(c *gin.Context) {
-	// Get uploader ID from context (set by auth middleware)
+	// get uploader ID from context (set by auth middleware)
 	uploaderID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
@@ -39,15 +39,16 @@ func (mc *MovieController) UploadMovie(c *gin.Context) {
 		return
 	}
 
-	// Parse form data
+	// parse form data
 	var req model.UploadMovieRequest
-	if err := c.ShouldBind(&req); err != nil {
+	err := c.ShouldBind(&req)
+	if err != nil {
 		logger.Error(err, "failed to bind upload movie request")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request data"})
 		return
 	}
 
-	// Get uploaded file
+	// get uploaded file
 	file, err := c.FormFile("video")
 	if err != nil {
 		logger.Error(err, "failed to get uploaded file")
@@ -55,7 +56,7 @@ func (mc *MovieController) UploadMovie(c *gin.Context) {
 		return
 	}
 
-	// Upload movie
+	// upload movie
 	movie, err := mc.movieService.UploadMovie(c.Request.Context(), &req, file, userID)
 	if err != nil {
 		logger.Error(err, "failed to upload movie")
@@ -99,7 +100,7 @@ func (mc *MovieController) GetMovies(c *gin.Context) {
 
 // GetMovie handles getting a specific movie - ADMIN ONLY
 func (mc *MovieController) GetMovie(c *gin.Context) {
-	// Parse movie ID
+	// parse movie ID
 	idStr := c.Param("id")
 	movieID, err := uuid.Parse(idStr)
 	if err != nil {
@@ -123,7 +124,7 @@ func (mc *MovieController) GetMovie(c *gin.Context) {
 
 // UpdateMovie handles updating movie metadata - ADMIN ONLY
 func (mc *MovieController) UpdateMovie(c *gin.Context) {
-	// Parse movie ID
+	// parse movie ID
 	idStr := c.Param("id")
 	movieID, err := uuid.Parse(idStr)
 	if err != nil {
@@ -131,9 +132,10 @@ func (mc *MovieController) UpdateMovie(c *gin.Context) {
 		return
 	}
 
-	// Parse request body
+	// parse request body
 	var req model.UploadMovieRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	err = c.ShouldBindJSON(&req)
+	if err != nil {
 		logger.Error(err, "failed to bind update movie request")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request data"})
 		return
@@ -159,7 +161,7 @@ func (mc *MovieController) UpdateMovie(c *gin.Context) {
 
 // DeleteMovie handles deleting a movie - ADMIN ONLY
 func (mc *MovieController) DeleteMovie(c *gin.Context) {
-	// Parse movie ID
+	// parse movie ID
 	idStr := c.Param("id")
 	movieID, err := uuid.Parse(idStr)
 	if err != nil {
@@ -184,7 +186,7 @@ func (mc *MovieController) DeleteMovie(c *gin.Context) {
 
 // GetMovieStreamURL handles getting a stream URL for a movie - ADMIN ONLY
 func (mc *MovieController) GetMovieStreamURL(c *gin.Context) {
-	// Parse movie ID
+	// parse movie ID
 	idStr := c.Param("id")
 	movieID, err := uuid.Parse(idStr)
 	if err != nil {
