@@ -1,6 +1,11 @@
 package app
 
-import "github.com/gin-gonic/gin"
+import (
+	"watch-party/pkg/auth"
+	"watch-party/pkg/model"
+
+	"github.com/gin-gonic/gin"
+)
 
 func (a *appServer) RegisterHandlers() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
@@ -10,13 +15,20 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 	handler.Use(gin.Logger())
 	handler.Use(gin.Recovery())
 
-	// TODO: ping upstream services
+	// Create JWT middleware
+	jwtManager := auth.NewJWTManager(a.config.JWTSecret)
+	authMiddleware := auth.AuthMiddleware(jwtManager)
+	adminMiddleware := auth.RequireRole(model.RoleAdmin)
+
+	// Health check
 	handler.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+		c.JSON(200, gin.H{"status": "healthy"})
 	})
 
-	// TODO: modularize
+	// API routes
 	api := handler.Group("/api/v1")
+
+	// Public routes (no authentication required)
 	{
 		// auth routes
 		auth := api.Group("/auth")
@@ -36,6 +48,27 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 		{
 			users.POST("/register", a.controller.RegisterUser)
 		}
+	}
+
+	// Admin-only routes (authentication + admin role required)
+	adminRoutes := api.Group("/admin")
+	adminRoutes.Use(authMiddleware)
+	adminRoutes.Use(adminMiddleware)
+	{
+		// Movies management - Admin only
+		adminRoutes.POST("/movies", a.movieController.UploadMovie)
+		adminRoutes.GET("/movies", a.movieController.GetMovies)
+		adminRoutes.GET("/movies/:id", a.movieController.GetMovie)
+		adminRoutes.PUT("/movies/:id", a.movieController.UpdateMovie)
+		adminRoutes.DELETE("/movies/:id", a.movieController.DeleteMovie)
+		adminRoutes.GET("/movies/:id/stream", a.movieController.GetMovieStreamURL)
+		adminRoutes.GET("/my-movies", a.movieController.GetMyMovies)
+	}
+
+	// File serving for local storage (if needed)
+	// This will serve files from the uploads directory for local storage
+	if a.config.Storage.Provider == "local" {
+		api.Static("/files", a.config.Storage.LocalPath)
 	}
 
 	return handler

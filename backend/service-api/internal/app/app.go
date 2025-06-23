@@ -11,18 +11,22 @@ import (
 	"watch-party/pkg/config"
 	"watch-party/pkg/database"
 	"watch-party/pkg/logger"
+	"watch-party/pkg/storage"
 	mdw "watch-party/service-api/internal/app/middleware"
 	ctl "watch-party/service-api/internal/controller"
 	authRepo "watch-party/service-api/internal/repository/auth"
+	movieRepo "watch-party/service-api/internal/repository/movie"
 	userRepo "watch-party/service-api/internal/repository/user"
 	authService "watch-party/service-api/internal/service/auth"
+	movieService "watch-party/service-api/internal/service/movie"
 	userService "watch-party/service-api/internal/service/user"
 )
 
 type appServer struct {
-	config     *config.Config
-	middleware mdw.MiddlewareProvider
-	controller ctl.ControllerProvider
+	config          *config.Config
+	middleware      mdw.MiddlewareProvider
+	controller      ctl.ControllerProvider
+	movieController *ctl.MovieController
 }
 
 // NewAppServer creates a new instance of appServer with the provided configuration, middleware, and controller.
@@ -33,24 +37,34 @@ func NewAppServer(cfg *config.Config) *appServer {
 		logger.Fatalf("failed to initialize database: %v", err)
 	}
 
+	// initialize storage provider
+	storageProvider, err := storage.NewStorageProvider(context.Background(), &cfg.Storage)
+	if err != nil {
+		logger.Fatalf("failed to initialize storage provider: %v", err)
+	}
+
 	// initialize repositories
 	userRepository := userRepo.NewRepository(db)
 	authRepository := authRepo.NewRepository(db)
+	movieRepository := movieRepo.NewRepository(db)
 
 	// initialize services
 	userSvc := userService.NewUserService(userRepository)
 	authSvc := authService.NewAuthService(cfg, userSvc, authRepository)
+	movieSvc := movieService.NewMovieService(movieRepository, storageProvider)
 
-	// initialize controller
+	// initialize controllers
 	controller := ctl.NewController(authSvc)
+	movieController := ctl.NewMovieController(movieSvc)
 
 	// initialize middleware
 	middleware := mdw.NewMiddleware()
 
 	return &appServer{
-		config:     cfg,
-		middleware: middleware,
-		controller: controller,
+		config:          cfg,
+		middleware:      middleware,
+		controller:      controller,
+		movieController: movieController,
 	}
 }
 

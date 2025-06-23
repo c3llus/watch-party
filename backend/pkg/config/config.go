@@ -12,6 +12,7 @@ type Config struct {
 	JWTSecret string         `json:"jwt_secret"`
 	Database  DatabaseConfig `json:"database"`
 	Log       LogConfig      `json:"log"`
+	Storage   StorageConfig  `json:"storage"`
 }
 
 type DatabaseConfig struct {
@@ -29,6 +30,13 @@ type DatabaseConfig struct {
 
 type LogConfig struct {
 	Level string `mapstructure:"log_level"`
+}
+
+type StorageConfig struct {
+	Provider           string `mapstructure:"storage_provider"`
+	LocalPath          string `mapstructure:"storage_local_path"`
+	GCSBucket          string `mapstructure:"storage_gcs_bucket"`
+	GCSCredentialsPath string `mapstructure:"storage_gcs_credentials_path"`
 }
 
 func init() {
@@ -54,10 +62,16 @@ func NewConfig() *Config {
 			MaxOpenConns:    parseInt("DB_MAX_OPEN_CONNS"),
 			MaxIdleConns:    parseInt("DB_MAX_IDLE_CONNS"),
 			ConnMaxLifetime: parseDuration("DB_CONN_MAX_LIFETIME"),
-			SSLMode:         getOptionalSecret("DB_SSL_MODE", "disable"),
+			SSLMode:         getOptionalSecret("DB_SSL_MODE", "disable"), // Default to "disable" if not set
 		},
 		Log: LogConfig{
 			Level: getOptionalSecret("LOG_LEVEL", "info"),
+		},
+		Storage: StorageConfig{
+			Provider:           getOptionalSecret("STORAGE_PROVIDER", "local"),
+			LocalPath:          getOptionalSecret("STORAGE_LOCAL_PATH", "./uploads"),
+			GCSBucket:          getOptionalSecret("STORAGE_GCS_BUCKET", ""),
+			GCSCredentialsPath: getOptionalSecret("STORAGE_GCS_CREDENTIALS_PATH", ""),
 		},
 	}
 }

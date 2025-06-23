@@ -2,3 +2,7 @@
 *no-commit*
 
 .env
+
+*/bin*
+*debug*
+*.mp4
