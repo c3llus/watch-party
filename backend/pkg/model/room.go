@@ -19,6 +19,7 @@ type RoomAccess struct {
 	UserID     uuid.UUID `json:"user_id" db:"user_id"`
 	RoomID     uuid.UUID `json:"room_id" db:"room_id"`
 	AccessType string    `json:"access_type" db:"access_type"` // "granted" or "guest"
+	Status     string    `json:"status" db:"status"`           // "granted", "invited", "requested", "denied"
 	GrantedAt  time.Time `json:"granted_at" db:"granted_at"`
 }
 
@@ -26,6 +27,14 @@ type RoomAccess struct {
 const (
 	AccessTypeGranted = "granted"
 	AccessTypeGuest   = "guest"
+)
+
+// RoomAccessStatus constants
+const (
+	StatusGranted   = "granted"   // User has full access
+	StatusInvited   = "invited"   // User is invited and can join
+	StatusRequested = "requested" // Guest requested access
+	StatusDenied    = "denied"    // Access was denied
 )
 
 // CreateRoomRequest represents the request to create a new room
@@ -64,6 +73,16 @@ type InviteUserResponse struct {
 // JoinRoomRequest represents the request to join a room
 type JoinRoomRequest struct {
 	InviteToken string `json:"invite_token,omitempty"`
+}
+
+// JoinRoomByCodeRequest represents the request to join a room by code
+type JoinRoomByCodeRequest struct {
+	RoomCode string `json:"room_code" binding:"required"`
+}
+
+// JoinRoomByIDRequest represents the request to join a room by ID
+type JoinRoomByIDRequest struct {
+	RoomID uuid.UUID `json:"room_id" binding:"required"`
 }
 
 // JoinRoomResponse represents the response after joining a room
@@ -105,4 +124,22 @@ type RoomEvent struct {
 	EventData map[string]interface{} `json:"event_data" db:"event_data"`
 	VideoTime *float64               `json:"video_time,omitempty" db:"video_time"`
 	Timestamp time.Time              `json:"timestamp" db:"timestamp"`
+}
+
+// GuestAccessRequest represents a guest request to join a room
+type GuestAccessRequest struct {
+	ID             uuid.UUID  `json:"id" db:"id"`
+	RoomID         uuid.UUID  `json:"room_id" db:"room_id"`
+	GuestName      string     `json:"guest_name" db:"guest_name"`
+	RequestMessage string     `json:"request_message" db:"request_message"`
+	Status         string     `json:"status" db:"status"` // pending, approved, denied
+	RequestedAt    time.Time  `json:"requested_at" db:"requested_at"`
+	ReviewedBy     *uuid.UUID `json:"reviewed_by,omitempty" db:"reviewed_by"`
+	ReviewedAt     *time.Time `json:"reviewed_at,omitempty" db:"reviewed_at"`
+}
+
+// RequestGuestAccessRequest represents the request payload for guest access
+type RequestGuestAccessRequest struct {
+	GuestName      string `json:"guest_name" binding:"required"`
+	RequestMessage string `json:"request_message,omitempty"`
 }

@@ -28,18 +28,29 @@ erDiagram
         string user_id PK, FK "Composite PK, FK to users"
         string room_id PK, FK "Composite PK, FK to rooms"
         string access_type "granted | guest"
+        string status "invited | granted"
         datetime granted_at
     }
-    room_invitations {
+    guest_access_requests {
         string id PK "UUID, PK"
         string room_id FK "FK to rooms"
-        string inviter_id FK "FK to users"
-        string email
-        string token UK "Unique invitation token"
-        text message
-        datetime expires_at
-        datetime used_at
-        datetime created_at
+        string guest_name
+        text request_message
+        string status "pending | approved | denied"
+        datetime requested_at
+        string reviewed_by FK "FK to users"
+        datetime reviewed_at
+    }
+    room_invitations {
+        string id PK "UUID, PK - DEPRECATED"
+        string room_id FK "FK to rooms - DEPRECATED"
+        string inviter_id FK "FK to users - DEPRECATED"
+        string email "DEPRECATED"
+        string token UK "Unique invitation token - DEPRECATED"
+        text message "DEPRECATED"
+        datetime expires_at "DEPRECATED"
+        datetime used_at "DEPRECATED"
+        datetime created_at "DEPRECATED"
     }
     room_sessions {
         string id PK "UUID, PK"
@@ -70,15 +81,15 @@ erDiagram
     users ||--o{ room_access : "is member of"
     users ||--o{ rooms : "hosts"
     users ||--o{ movies : "uploads"
-    users ||--o{ room_invitations : "invites"
     users ||--o{ room_sessions : "hosts session"
     users ||--o{ room_session_events : "generates events"
     users ||--o{ tokens : "has refresh tokens"
+    users ||--o{ guest_access_requests : "reviews requests"
     
     rooms ||--|{ room_access : "has members"
     rooms }|--|| movies : "plays"
-    rooms ||--o{ room_invitations : "has invitations"
     rooms ||--o{ room_sessions : "has sessions"
+    rooms ||--o{ guest_access_requests : "receives requests"
     
     room_sessions ||--o{ room_session_events : "contains events"
     room_sessions }|--|| movies : "plays movie"

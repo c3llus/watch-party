@@ -163,7 +163,7 @@ func (rc *RoomController) JoinRoom(c *gin.Context) {
 	// join room
 	response, err := rc.roomService.JoinRoomByInvitation(c.Request.Context(), claims.UserID, &req)
 	if err != nil {
-		if err.Error() == "invalid invitation token" || err.Error() == "invitation has expired" || err.Error() == "invitation has already been used" {
+		if err.Error() == "invalid invitation token" || err.Error() == "invitation has expired" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -200,8 +200,45 @@ func (rc *RoomController) JoinRoomByToken(c *gin.Context) {
 	req := &model.JoinRoomRequest{InviteToken: token}
 	response, err := rc.roomService.JoinRoomByInvitation(c.Request.Context(), claims.UserID, req)
 	if err != nil {
-		if err.Error() == "invalid invitation token" || err.Error() == "invitation has expired" || err.Error() == "invitation has already been used" {
+		if err.Error() == "invalid invitation token" || err.Error() == "invitation has expired" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// JoinRoomByID handles GET /api/v1/rooms/join/{room_id}
+func (rc *RoomController) JoinRoomByID(c *gin.Context) {
+	// get user ID from JWT token
+	userClaims, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	claims, ok := userClaims.(*auth.JWTClaims)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authentication token"})
+		return
+	}
+
+	// parse room ID from URL
+	roomIDParam := c.Param("room_id")
+	roomID, err := uuid.Parse(roomIDParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	// join room by ID
+	response, err := rc.roomService.JoinRoomByID(c.Request.Context(), claims.UserID, roomID)
+	if err != nil {
+		if err.Error() == "access denied - you need to be invited to this room" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied - you need to be invited to this room"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

@@ -1,0 +1,62 @@
+sequenceDiagram
+    participant Host as Host/Admin
+    participant API as api-service
+    participant DB as PostgreSQL
+    participant Email as Email Service
+    participant User as Invited User
+    participant Sync as sync-service
+
+    Note over Host, User: Complete Google Meet-style Invitation Flow
+    
+    %% Room Creation
+    Host->>API: POST /rooms (create room with movie)
+    API->>DB: INSERT INTO rooms, room_access (host access)
+    API-->>Host: Room created with ID
+
+    %% Send Invitation
+    Host->>API: POST /rooms/{roomId}/invite {"email": "user@example.com"}
+    API->>DB: SELECT user WHERE email = 'user@example.com'
+    
+    alt User exists
+        API->>DB: INSERT/UPDATE room_access (status='invited')
+        Note over API: User added to access list
+    else User doesn't exist
+        Note over API: Send invitation anyway (user can register later)
+    end
+    
+    API->>Email: Send invitation with persistent link /rooms/join/{roomId}
+    Email-->>User: Email with "Join Watch Party" button
+    API-->>Host: Invitation sent confirmation
+    
+    %% User Joins Room (First Time)
+    Note over User: User clicks email link or visits /rooms/join/{roomId}
+    User->>API: GET /rooms/join/{roomId} (with JWT)
+    API->>DB: Check room_access for user + room
+    
+    alt User has invited status
+        API->>DB: UPDATE room_access SET status='granted'
+        Note over API: Upgrade invitation to full access
+    else User already has access
+        Note over API: Allow join (persistent access)
+    else User has no access
+        API-->>User: 403 Access Denied
+    end
+    
+    API->>DB: GET room details + movie info
+    API-->>User: Room page with video player
+    
+    %% WebSocket Connection
+    User->>Sync: WebSocket connect /ws/room/{roomId}
+    Sync->>Sync: Validate JWT + room access
+    Sync-->>User: Connected, receive room state
+    Sync-->>Host: Broadcast "User joined"
+    
+    %% User Rejoins Later (Persistent Access)
+    Note over User: User visits same link later
+    User->>API: GET /rooms/join/{roomId}
+    Note over API: User still has 'granted' status
+    API-->>User: Direct access (no status change needed)
+    User->>Sync: WebSocket connect
+    Sync-->>User: Connected immediately
+    
+    Note over Host, User: No tokens consumed, link works forever!

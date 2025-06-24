@@ -75,6 +75,7 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 		userRoutes.POST("/rooms/:id/invite", a.roomController.InviteUser)
 		userRoutes.POST("/rooms/join", a.roomController.JoinRoom)
 		userRoutes.GET("/rooms/join", a.roomController.JoinRoomByToken)
+		userRoutes.GET("/rooms/join/:room_id", a.roomController.JoinRoomByID)
 	}
 
 	// File serving for local storage (if needed)

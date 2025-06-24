@@ -4,16 +4,33 @@ sequenceDiagram
     participant Sync as sync-service
     participant DB as PostgreSQL
 
-    U->>API: GET /rooms/{roomId}
+    Note over U: User clicks persistent room link: /rooms/join/{roomId}
+    
+    U->>API: GET /rooms/join/{roomId}
     Note over U, API: Request includes User's JWT
-    API->>DB: VERIFY user has access in 'room_access' table
-    DB-->>API: Access confirmed
-    API-->>U: HTTP 200 OK (Room details, movie info)
+    API->>API: Validate JWT and extract user ID
+    API->>DB: SELECT * FROM room_access WHERE user_id = ? AND room_id = ?
+    DB-->>API: Access record (or null)
+    
+    alt User has access with status='invited'
+        API->>DB: UPDATE room_access SET status='granted', granted_at=NOW() WHERE user_id=? AND room_id=?
+        DB-->>API: Update confirmed
+        Note over API: Upgrade invitation to full access
+    else User has access with status='granted'
+        Note over API: User already has access, allow join
+    else User has no access
+        API-->>U: HTTP 403 Forbidden {"error": "Access denied - room requires invitation"}
+        Note over U: Show "Request Access" UI (future feature)
+    end
+    
+    API->>DB: SELECT room.*, movie.* FROM rooms JOIN movies WHERE room.id = ?
+    DB-->>API: Room and movie details
+    API-->>U: HTTP 200 OK (Room details, movie info, join permissions)
 
     U->>Sync: WebSocket Upgrade Request to /ws/room/{roomId}
     Note over U, Sync: Request includes User's JWT for auth
-    Sync->>Sync: Validate JWT
+    Sync->>Sync: Validate JWT and check room access
     Sync->>Sync: Add user to room's client list
     Sync-->>U: WebSocket Connection Established
-    Sync->>U: SEND {"type": "ROOM_STATE", "payload": ...}
-    Sync->>Sync: Broadcast to other clients: {"type": "USER_JOINED", "payload": ...}
+    Sync->>U: SEND {"type": "ROOM_STATE", "payload": {...}}
+    Sync->>Sync: Broadcast to other clients: {"type": "USER_JOINED", "payload": {...}}

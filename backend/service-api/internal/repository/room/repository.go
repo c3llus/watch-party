@@ -93,13 +93,14 @@ func (r *Repository) GetRoomMemberCount(ctx context.Context, roomID uuid.UUID) (
 // GrantRoomAccess grants access to a room for a user
 func (r *Repository) GrantRoomAccess(ctx context.Context, access *model.RoomAccess) error {
 	query := `
-		INSERT INTO room_access (user_id, room_id, access_type, granted_at)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO room_access (user_id, room_id, access_type, status, granted_at)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (user_id, room_id) DO UPDATE SET
 			access_type = $3,
-			granted_at = $4`
+			status = $4,
+			granted_at = $5`
 
-	_, err := r.db.ExecContext(ctx, query, access.UserID, access.RoomID, access.AccessType, access.GrantedAt)
+	_, err := r.db.ExecContext(ctx, query, access.UserID, access.RoomID, access.AccessType, access.Status, access.GrantedAt)
 	return err
 }
 
@@ -167,4 +168,29 @@ func (r *Repository) IsRoomHost(ctx context.Context, userID, roomID uuid.UUID) (
 	}
 
 	return count > 0, nil
+}
+
+// GetUserRoomAccess retrieves the access record for a user in a room
+func (r *Repository) GetUserRoomAccess(ctx context.Context, userID, roomID uuid.UUID) (*model.RoomAccess, error) {
+	var access model.RoomAccess
+	query := `SELECT user_id, room_id, access_type, status, granted_at FROM room_access WHERE user_id = $1 AND room_id = $2`
+
+	row := r.db.QueryRowContext(ctx, query, userID, roomID)
+	err := row.Scan(&access.UserID, &access.RoomID, &access.AccessType, &access.Status, &access.GrantedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return &access, nil
+}
+
+// UpdateRoomAccess updates the access record for a user in a room
+func (r *Repository) UpdateRoomAccess(ctx context.Context, access *model.RoomAccess) error {
+	query := `
+		UPDATE room_access 
+		SET access_type = $3, status = $4, granted_at = $5
+		WHERE user_id = $1 AND room_id = $2`
+
+	_, err := r.db.ExecContext(ctx, query, access.UserID, access.RoomID, access.AccessType, access.Status, access.GrantedAt)
+	return err
 }

@@ -1,0 +1,39 @@
+sequenceDiagram
+    participant Guest as Guest User
+    participant API as api-service
+    participant DB as PostgreSQL
+    participant Sync as sync-service
+    participant Host as Host
+
+    Note over Guest, Host: Future: Guest Access Request Flow
+    
+    %% Guest discovers room
+    Guest->>API: GET /rooms/join/{roomId} (no auth)
+    API->>DB: SELECT room WHERE id = ?
+    API-->>Guest: Room info + "Request Access" form
+    
+    %% Guest requests access
+    Guest->>API: POST /rooms/{roomId}/request-access {"name": "John", "message": "Can I join?"}
+    API->>DB: INSERT INTO guest_access_requests (status='pending')
+    API-->>Guest: Request submitted, please wait
+    
+    %% Real-time notification to host
+    API->>Sync: Notify host about guest request
+    Sync->>Host: {"type": "GUEST_REQUEST", "data": {"name": "John", "message": "..."}}
+    
+    %% Host reviews request
+    Note over Host: UI shows "John wants to join [Approve] [Deny]"
+    Host->>API: POST /rooms/{roomId}/guest-requests/{requestId}/approve
+    API->>DB: UPDATE guest_access_requests SET status='approved'
+    
+    %% Notify guest of approval
+    API->>Sync: Guest approved notification
+    Sync->>Guest: {"type": "ACCESS_APPROVED", "data": {"guestToken": "temp123"}}
+    
+    %% Guest joins room
+    Guest->>Sync: WebSocket connect /ws/room/{roomId}?guestToken=temp123
+    Sync->>DB: Validate guest token (temporary access)
+    Sync-->>Guest: Connected as guest
+    Sync-->>Host: Broadcast "Guest John joined"
+    
+    Note over Guest, Host: Guest has temporary access for this session only

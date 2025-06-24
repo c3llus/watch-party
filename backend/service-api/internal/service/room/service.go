@@ -54,6 +54,7 @@ func (s *Service) CreateRoom(ctx context.Context, userID uuid.UUID, req *model.C
 		UserID:     userID,
 		RoomID:     room.ID,
 		AccessType: model.AccessTypeGranted,
+		Status:     model.StatusGranted,
 		GrantedAt:  time.Now(),
 	}
 
@@ -89,7 +90,7 @@ func (s *Service) GetRoom(ctx context.Context, userID, roomID uuid.UUID) (*model
 	return room, nil
 }
 
-// InviteUser sends an email invitation to join a room
+// InviteUser sends an email invitation and adds user to room access list
 func (s *Service) InviteUser(ctx context.Context, inviterID, roomID uuid.UUID, req *model.InviteUserRequest) (*model.InviteUserResponse, error) {
 	// check if the inviter is the host of the room
 	isHost, err := s.roomRepo.IsRoomHost(ctx, inviterID, roomID)
@@ -113,42 +114,41 @@ func (s *Service) InviteUser(ctx context.Context, inviterID, roomID uuid.UUID, r
 		return nil, fmt.Errorf("failed to get inviter details: %w", err)
 	}
 
-	// generate invitation token
-	token, err := s.generateInvitationToken()
+	// check if user exists by email
+	invitedUser, err := s.userRepo.GetByEmail(req.Email)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate invitation token: %w", err)
+		// user doesn't exist yet - we'll send them the room link anyway
+		// they can register and join later
+		fmt.Printf("Note: Invited user %s not found in system, sending room link anyway\n", req.Email)
 	}
 
-	// create invitation record
-	expiresAt := time.Now().Add(7 * 24 * time.Hour) // 7 days
-	invitation := &model.RoomInvitation{
-		ID:        uuid.New(),
-		RoomID:    roomID,
-		InviterID: inviterID,
-		Email:     req.Email,
-		Token:     token,
-		Message:   req.Message,
-		ExpiresAt: expiresAt,
-		CreatedAt: time.Now(),
+	// if user exists, add them to room access list immediately
+	if invitedUser != nil {
+		access := &model.RoomAccess{
+			UserID:     invitedUser.ID,
+			RoomID:     roomID,
+			AccessType: model.AccessTypeGranted,
+			Status:     model.StatusInvited,
+			GrantedAt:  time.Now(),
+		}
+
+		err = s.roomRepo.GrantRoomAccess(ctx, access)
+		if err != nil {
+			return nil, fmt.Errorf("failed to grant room access: %w", err)
+		}
 	}
 
-	err = s.roomRepo.CreateInvitation(ctx, invitation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create invitation: %w", err)
-	}
-
-	// send email invitation
-	err = s.sendInvitationEmail(ctx, invitation, inviter, room)
+	// send email invitation with persistent room link
+	err = s.sendInvitationEmailWithRoomLink(ctx, req, inviter, room)
 	if err != nil {
 		// log the error but don't fail the request
-		// the invitation is created, just the email sending failed
 		fmt.Printf("Warning: Failed to send invitation email: %v\n", err)
 	}
 
 	return &model.InviteUserResponse{
-		InviteToken: token,
-		ExpiresAt:   expiresAt,
-		Message:     "Invitation sent successfully",
+		InviteToken: "",          // No longer using tokens
+		ExpiresAt:   time.Time{}, // No expiration
+		Message:     "Invitation sent successfully. User can join anytime using the room link.",
 	}, nil
 }
 
@@ -168,9 +168,10 @@ func (s *Service) JoinRoomByInvitation(ctx context.Context, userID uuid.UUID, re
 		return nil, fmt.Errorf("invitation has expired")
 	}
 
-	if invitation.UsedAt != nil {
-		return nil, fmt.Errorf("invitation has already been used")
-	}
+	// Note: Removed single-use restriction to allow multiple joins like Google Meet
+	// if invitation.UsedAt != nil {
+	//     return nil, fmt.Errorf("invitation has already been used")
+	// }
 
 	// grant room access to the user
 	access := &model.RoomAccess{
@@ -185,11 +186,11 @@ func (s *Service) JoinRoomByInvitation(ctx context.Context, userID uuid.UUID, re
 		return nil, fmt.Errorf("failed to grant room access: %w", err)
 	}
 
-	// mark invitation as used
-	err = s.roomRepo.MarkInvitationUsed(ctx, req.InviteToken)
-	if err != nil {
-		return nil, fmt.Errorf("failed to mark invitation as used: %w", err)
-	}
+	// Note: Removed invitation marking as used to allow multiple joins
+	// err = s.roomRepo.MarkInvitationUsed(ctx, req.InviteToken)
+	// if err != nil {
+	//     return nil, fmt.Errorf("failed to mark invitation as used: %w", err)
+	// }
 
 	// get room details
 	room, err := s.roomRepo.GetRoomWithDetails(ctx, invitation.RoomID)
@@ -201,16 +202,6 @@ func (s *Service) JoinRoomByInvitation(ctx context.Context, userID uuid.UUID, re
 		Room:    *room,
 		Message: "Successfully joined the room",
 	}, nil
-}
-
-// generateInvitationToken generates a secure random token for invitations
-func (s *Service) generateInvitationToken() (string, error) {
-	bytes := make([]byte, 32)
-	_, err := rand.Read(bytes)
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes), nil
 }
 
 // sendInvitationEmail sends an invitation email
@@ -235,4 +226,75 @@ func (s *Service) sendInvitationEmail(ctx context.Context, invitation *model.Roo
 
 	// send email
 	return s.emailService.SendTemplateEmail(ctx, []string{invitation.Email}, email.TemplateRoomInvitation, templateData)
+}
+
+// JoinRoomByID allows a user to join a room using room ID (new Google Meet-style method)
+func (s *Service) JoinRoomByID(ctx context.Context, userID uuid.UUID, roomID uuid.UUID) (*model.JoinRoomResponse, error) {
+	// check if user already has access to the room
+	hasAccess, err := s.roomRepo.CheckRoomAccess(ctx, userID, roomID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check room access: %w", err)
+	}
+
+	if !hasAccess {
+		// check if user is invited
+		accessRecord, err := s.roomRepo.GetUserRoomAccess(ctx, userID, roomID)
+		if err != nil || accessRecord == nil || accessRecord.Status != model.StatusInvited {
+			return nil, fmt.Errorf("access denied - you need to be invited to this room")
+		}
+
+		// user is invited, upgrade their status to granted
+		accessRecord.Status = model.StatusGranted
+		accessRecord.GrantedAt = time.Now()
+
+		err = s.roomRepo.UpdateRoomAccess(ctx, accessRecord)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update room access: %w", err)
+		}
+	}
+
+	// get room details
+	room, err := s.roomRepo.GetRoomWithDetails(ctx, roomID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get room: %w", err)
+	}
+
+	return &model.JoinRoomResponse{
+		Room:    *room,
+		Message: "Successfully joined the room",
+	}, nil
+}
+
+// generateInvitationToken generates a secure random token for invitations
+func (s *Service) generateInvitationToken() (string, error) {
+	bytes := make([]byte, 32)
+	_, err := rand.Read(bytes)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+// sendInvitationEmailWithRoomLink sends an invitation email with persistent room link
+func (s *Service) sendInvitationEmailWithRoomLink(ctx context.Context, req *model.InviteUserRequest, inviter *model.User, room *model.RoomWithDetails) error {
+	// construct room URL (persistent link)
+	roomURL := fmt.Sprintf("%s/rooms/join/%s", s.config.Email.Templates.BaseURL, room.ID.String())
+
+	// prepare template data for new persistent link format
+	templateData := email.InvitationTemplateData{
+		TemplateData: email.TemplateData{
+			RecipientName: req.Email,
+			SenderName:    inviter.Email,
+			AppName:       s.config.Email.Templates.AppName,
+			AppURL:        s.config.Email.Templates.BaseURL,
+		},
+		RoomID:      room.ID.String(),
+		MovieTitle:  room.Movie.Title,
+		InviterName: inviter.Email,
+		InviteURL:   roomURL,
+		ExpiresAt:   "Never (you can join anytime!)",
+	}
+
+	// send email
+	return s.emailService.SendTemplateEmail(ctx, []string{req.Email}, email.TemplateRoomInvitation, templateData)
 }

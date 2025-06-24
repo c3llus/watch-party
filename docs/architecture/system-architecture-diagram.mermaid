@@ -1,37 +1,53 @@
 graph TD
     subgraph UserBrowser["User's Browser"]
         User["End User"]
+        Guest["Guest User"]
     end
 
     subgraph GCP["Google Cloud Platform (GCP)"]
         API_Service["
-            API Service (Go/Gin)
-            Handles HTTP: Auth, Movie CRUD, Room Creation
+            API Service
+            - HTTP Auth & Room Management
+            - Google Meet-style Invitations
+            - Persistent Room Links
+            - Guest Access Requests (TODO)
         "]
         Sync_Service["
-            Sync Service (Go/Gorilla-WebSocket)
-            Handles Real-time Sync & Playback State
+            Sync Service
+            - Real-time Video Sync
+            - Room State Management
+            - Guest Approval Flow (TODO)
         "]
         
         PostgreSQL["
             Cloud SQL for PostgreSQL
-            Stores Users, Movies, Rooms
+            - Users, Movies, Rooms
+            - Room Access Lists
+            - Guest Access Requests
         "]
         Redis["
             Memorystore for Redis
-            Caches Sessions, Manages Room State
+            - WebSocket Sessions
+            - Room State Cache
         "]
         GCS["
-                Cloud Storage
-                Stores Video Files
+            Cloud Storage
+            - Video File Storage
+            - Secure File Access
         "]
     end
 
     User --> API_Service
     User --> Sync_Service
+    Guest -.-> API_Service
+    Guest -.-> Sync_Service
 
     API_Service --> PostgreSQL
     API_Service --> Redis
     API_Service --> GCS
 
     Sync_Service --> Redis
+    Sync_Service --> PostgreSQL
+
+    email -.-> User
+    email -.-> Guest

@@ -1,15 +1,31 @@
 sequenceDiagram
-    participant Admin as Admin (Logged-in)
+    participant Admin as Admin/Host (Logged-in)
     participant API as api-service
     participant DB as PostgreSQL
+    participant Email as Email Service
     participant Log as Cloud Logging
 
     Admin->>API: POST /rooms/{roomId}/invite ({"email": "user@example.com"})
     Note over Admin, API: Request includes Admin's JWT
-    API->>API: Validate JWT and check user role is 'admin' or host
+    API->>API: Validate JWT and check user is 'admin' or room host
+    
     API->>DB: SELECT id FROM users WHERE email = 'user@example.com'
-    DB-->>API: User ID
-    API->>DB: INSERT INTO room_access (user_id, room_id, access_type) VALUES (?, ?, 'granted')
-    DB-->>API: Confirm insertion
+    DB-->>API: User ID (or null if not found)
+    
+    alt User exists in system
+        API->>DB: INSERT INTO room_access (user_id, room_id, access_type, status) VALUES (?, ?, 'granted', 'invited')
+        DB-->>API: Confirm insertion
+        Note over API: User added to room access list
+    else User doesn't exist
+        Note over API: Skip room_access insertion, send invitation anyway
+    end
+    
+    API->>API: Generate persistent room link: /rooms/join/{roomId}
+    API->>Email: Send invitation email with persistent room link
+    Email-->>API: Email sent confirmation
+    
     API->>Log: Log invitation event (structured JSON)
-    API-->>Admin: HTTP 200 OK
+    API-->>Admin: HTTP 200 OK {"message": "Invitation sent", "roomLink": "/rooms/join/{roomId}"}
+    
+    Note over Admin, Email: User receives email with persistent room link
+    Note over Admin, Email: Link works for multiple uses, no expiration
