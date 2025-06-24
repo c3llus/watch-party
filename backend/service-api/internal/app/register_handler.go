@@ -76,6 +76,18 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 		userRoutes.POST("/rooms/join", a.roomController.JoinRoom)
 		userRoutes.GET("/rooms/join", a.roomController.JoinRoomByToken)
 		userRoutes.GET("/rooms/join/:room_id", a.roomController.JoinRoomByID)
+
+		// Guest management - host only
+		userRoutes.GET("/rooms/:id/guest-requests", a.roomController.GetPendingGuestRequests)
+		userRoutes.POST("/rooms/:id/guest-requests/:requestId/approve", a.roomController.ApproveGuestRequest)
+	}
+
+	// Public routes (no authentication required)
+	publicRoutes := api.Group("")
+	{
+		// Guest access requests
+		publicRoutes.POST("/rooms/:id/request-access", a.roomController.RequestGuestAccess)
+		publicRoutes.GET("/guest/validate/:token", a.roomController.ValidateGuestSession)
 	}
 
 	// File serving for local storage (if needed)

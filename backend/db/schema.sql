@@ -129,6 +129,20 @@ CREATE TABLE IF NOT EXISTS guest_access_requests (
 );
 
 -- =================================================================
+-- Table: guest_sessions
+-- Stores temporary session tokens for approved guests.
+-- =================================================================
+CREATE TABLE IF NOT EXISTS guest_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    guest_name VARCHAR(255) NOT NULL,
+    session_token VARCHAR(255) NOT NULL UNIQUE,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    approved_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- =================================================================
 -- Indexes for Performance
 -- =================================================================
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
@@ -150,6 +164,11 @@ CREATE INDEX IF NOT EXISTS idx_room_session_events_session_id ON room_session_ev
 CREATE INDEX IF NOT EXISTS idx_room_session_events_user_id ON room_session_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_room_session_events_event_type ON room_session_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_room_session_events_timestamp ON room_session_events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_guest_requests_room ON guest_access_requests(room_id);
+CREATE INDEX IF NOT EXISTS idx_guest_requests_status ON guest_access_requests(status);
+CREATE INDEX IF NOT EXISTS idx_guest_sessions_room ON guest_sessions(room_id);
+CREATE INDEX IF NOT EXISTS idx_guest_sessions_token ON guest_sessions(session_token);
+CREATE INDEX IF NOT EXISTS idx_guest_sessions_expires ON guest_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_guest_requests_room ON guest_access_requests(room_id);
 CREATE INDEX IF NOT EXISTS idx_guest_requests_status ON guest_access_requests(status);
 

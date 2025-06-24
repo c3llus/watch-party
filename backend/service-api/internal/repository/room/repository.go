@@ -194,3 +194,103 @@ func (r *Repository) UpdateRoomAccess(ctx context.Context, access *model.RoomAcc
 	_, err := r.db.ExecContext(ctx, query, access.UserID, access.RoomID, access.AccessType, access.Status, access.GrantedAt)
 	return err
 }
+
+// Guest access methods
+
+// CreateGuestAccessRequest creates a new guest access request
+func (r *Repository) CreateGuestAccessRequest(ctx context.Context, req *model.GuestAccessRequest) error {
+	query := `
+		INSERT INTO guest_access_requests (id, room_id, guest_name, request_message, status, requested_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`
+
+	_, err := r.db.ExecContext(ctx, query, req.ID, req.RoomID, req.GuestName, req.RequestMessage, req.Status, req.RequestedAt)
+	return err
+}
+
+// GetGuestAccessRequest retrieves a guest access request by ID
+func (r *Repository) GetGuestAccessRequest(ctx context.Context, requestID uuid.UUID) (*model.GuestAccessRequest, error) {
+	var req model.GuestAccessRequest
+	query := `
+		SELECT id, room_id, guest_name, request_message, status, requested_at, reviewed_by, reviewed_at
+		FROM guest_access_requests WHERE id = $1`
+
+	row := r.db.QueryRowContext(ctx, query, requestID)
+	err := row.Scan(&req.ID, &req.RoomID, &req.GuestName, &req.RequestMessage, &req.Status, &req.RequestedAt, &req.ReviewedBy, &req.ReviewedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return &req, nil
+}
+
+// GetPendingGuestRequests retrieves all pending guest requests for a room
+func (r *Repository) GetPendingGuestRequests(ctx context.Context, roomID uuid.UUID) ([]model.GuestAccessRequest, error) {
+	var requests []model.GuestAccessRequest
+	query := `
+		SELECT id, room_id, guest_name, request_message, status, requested_at, reviewed_by, reviewed_at
+		FROM guest_access_requests 
+		WHERE room_id = $1 AND status = 'pending'
+		ORDER BY requested_at ASC`
+
+	rows, err := r.db.QueryContext(ctx, query, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var req model.GuestAccessRequest
+		err := rows.Scan(&req.ID, &req.RoomID, &req.GuestName, &req.RequestMessage, &req.Status, &req.RequestedAt, &req.ReviewedBy, &req.ReviewedAt)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, req)
+	}
+
+	return requests, rows.Err()
+}
+
+// UpdateGuestAccessRequest updates the status of a guest access request
+func (r *Repository) UpdateGuestAccessRequest(ctx context.Context, requestID uuid.UUID, status string, reviewedBy uuid.UUID) error {
+	query := `
+		UPDATE guest_access_requests 
+		SET status = $1, reviewed_by = $2, reviewed_at = NOW()
+		WHERE id = $3`
+
+	_, err := r.db.ExecContext(ctx, query, status, reviewedBy, requestID)
+	return err
+}
+
+// CreateGuestSession creates a temporary session for an approved guest
+func (r *Repository) CreateGuestSession(ctx context.Context, session *model.GuestSession) error {
+	query := `
+		INSERT INTO guest_sessions (id, room_id, guest_name, session_token, expires_at, approved_by, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+
+	_, err := r.db.ExecContext(ctx, query, session.ID, session.RoomID, session.GuestName, session.SessionToken, session.ExpiresAt, session.ApprovedBy, session.CreatedAt)
+	return err
+}
+
+// GetGuestSessionByToken retrieves a guest session by token
+func (r *Repository) GetGuestSessionByToken(ctx context.Context, token string) (*model.GuestSession, error) {
+	var session model.GuestSession
+	query := `
+		SELECT id, room_id, guest_name, session_token, expires_at, approved_by, created_at
+		FROM guest_sessions 
+		WHERE session_token = $1 AND expires_at > NOW()`
+
+	row := r.db.QueryRowContext(ctx, query, token)
+	err := row.Scan(&session.ID, &session.RoomID, &session.GuestName, &session.SessionToken, &session.ExpiresAt, &session.ApprovedBy, &session.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return &session, nil
+}
+
+// CleanupExpiredGuestSessions removes expired guest sessions
+func (r *Repository) CleanupExpiredGuestSessions(ctx context.Context) error {
+	query := `DELETE FROM guest_sessions WHERE expires_at <= NOW()`
+	_, err := r.db.ExecContext(ctx, query)
+	return err
+}

@@ -126,20 +126,57 @@ type RoomEvent struct {
 	Timestamp time.Time              `json:"timestamp" db:"timestamp"`
 }
 
-// GuestAccessRequest represents a guest request to join a room
+// GuestAccessRequest represents a guest's request to join a room
 type GuestAccessRequest struct {
 	ID             uuid.UUID  `json:"id" db:"id"`
 	RoomID         uuid.UUID  `json:"room_id" db:"room_id"`
 	GuestName      string     `json:"guest_name" db:"guest_name"`
 	RequestMessage string     `json:"request_message" db:"request_message"`
-	Status         string     `json:"status" db:"status"` // pending, approved, denied
+	Status         string     `json:"status" db:"status"`
 	RequestedAt    time.Time  `json:"requested_at" db:"requested_at"`
-	ReviewedBy     *uuid.UUID `json:"reviewed_by,omitempty" db:"reviewed_by"`
-	ReviewedAt     *time.Time `json:"reviewed_at,omitempty" db:"reviewed_at"`
+	ReviewedBy     *uuid.UUID `json:"reviewed_by" db:"reviewed_by"`
+	ReviewedAt     *time.Time `json:"reviewed_at" db:"reviewed_at"`
 }
 
-// RequestGuestAccessRequest represents the request payload for guest access
-type RequestGuestAccessRequest struct {
+// GuestSession represents a temporary session for an approved guest
+type GuestSession struct {
+	ID           uuid.UUID `json:"id" db:"id"`
+	RoomID       uuid.UUID `json:"room_id" db:"room_id"`
+	GuestName    string    `json:"guest_name" db:"guest_name"`
+	SessionToken string    `json:"session_token" db:"session_token"`
+	ExpiresAt    time.Time `json:"expires_at" db:"expires_at"`
+	ApprovedBy   uuid.UUID `json:"approved_by" db:"approved_by"`
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
+}
+
+// GuestAccessRequest status constants
+const (
+	GuestStatusPending  = "pending"
+	GuestStatusApproved = "approved"
+	GuestStatusDenied   = "denied"
+)
+
+// Guest request/response models
+type GuestAccessRequestRequest struct {
 	GuestName      string `json:"guest_name" binding:"required"`
-	RequestMessage string `json:"request_message,omitempty"`
+	RequestMessage string `json:"request_message"`
+}
+
+type GuestAccessRequestResponse struct {
+	RequestID uuid.UUID `json:"request_id"`
+	Status    string    `json:"status"`
+	Message   string    `json:"message"`
+}
+
+type ApproveGuestRequest struct {
+	Approved bool   `json:"approved"`
+	Message  string `json:"message"`
+}
+
+type ApproveGuestResponse struct {
+	RequestID    uuid.UUID `json:"request_id"`
+	Status       string    `json:"status"`
+	SessionToken string    `json:"session_token,omitempty"`
+	ExpiresAt    time.Time `json:"expires_at,omitempty"`
+	Message      string    `json:"message"`
 }

@@ -298,3 +298,173 @@ func (s *Service) sendInvitationEmailWithRoomLink(ctx context.Context, req *mode
 	// send email
 	return s.emailService.SendTemplateEmail(ctx, []string{req.Email}, email.TemplateRoomInvitation, templateData)
 }
+
+// Guest access methods
+
+// RequestGuestAccess allows an unauthenticated user to request access to a room
+func (s *Service) RequestGuestAccess(ctx context.Context, roomID uuid.UUID, req *model.GuestAccessRequestRequest) (*model.GuestAccessRequestResponse, error) {
+	// Verify room exists
+	_, err := s.roomRepo.GetRoomByID(ctx, roomID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("room not found")
+		}
+		return nil, fmt.Errorf("failed to verify room: %w", err)
+	}
+
+	// Create guest access request
+	guestRequest := &model.GuestAccessRequest{
+		ID:             uuid.New(),
+		RoomID:         roomID,
+		GuestName:      req.GuestName,
+		RequestMessage: req.RequestMessage,
+		Status:         model.GuestStatusPending,
+		RequestedAt:    time.Now(),
+	}
+
+	err = s.roomRepo.CreateGuestAccessRequest(ctx, guestRequest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create guest access request: %w", err)
+	}
+
+	// TODO: Send real-time notification to room host via WebSocket
+	fmt.Printf("Guest access request created: %s wants to join room %s\n", req.GuestName, roomID.String())
+
+	return &model.GuestAccessRequestResponse{
+		RequestID: guestRequest.ID,
+		Status:    model.GuestStatusPending,
+		Message:   "Your request has been sent to the host. Please wait for approval.",
+	}, nil
+}
+
+// GetPendingGuestRequests retrieves pending guest requests for a room (host only)
+func (s *Service) GetPendingGuestRequests(ctx context.Context, userID uuid.UUID, roomID uuid.UUID) ([]model.GuestAccessRequest, error) {
+	// Verify user is the host
+	room, err := s.roomRepo.GetRoomByID(ctx, roomID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get room: %w", err)
+	}
+
+	if room.HostID != userID {
+		return nil, fmt.Errorf("access denied - only room host can view guest requests")
+	}
+
+	return s.roomRepo.GetPendingGuestRequests(ctx, roomID)
+}
+
+// ApproveGuestRequest allows a host to approve or deny a guest access request
+func (s *Service) ApproveGuestRequest(ctx context.Context, hostID uuid.UUID, roomID uuid.UUID, requestID uuid.UUID, approved bool) (*model.ApproveGuestResponse, error) {
+	fmt.Printf("DEBUG: ApproveGuestRequest called with hostID=%s, roomID=%s, requestID=%s, approved=%t\n", hostID, roomID, requestID, approved)
+
+	// Verify user is the host
+	room, err := s.roomRepo.GetRoomByID(ctx, roomID)
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to get room: %v\n", err)
+		return nil, fmt.Errorf("failed to get room: %w", err)
+	}
+
+	if room.HostID != hostID {
+		fmt.Printf("DEBUG: Host ID mismatch: room.HostID=%s, hostID=%s\n", room.HostID, hostID)
+		return nil, fmt.Errorf("access denied - only room host can approve guest requests")
+	}
+
+	// Get the guest request
+	guestRequest, err := s.roomRepo.GetGuestAccessRequest(ctx, requestID)
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to get guest request: %v\n", err)
+		return nil, fmt.Errorf("failed to get guest request: %w", err)
+	}
+
+	if guestRequest.RoomID != roomID {
+		fmt.Printf("DEBUG: Room ID mismatch: guestRequest.RoomID=%s, roomID=%s\n", guestRequest.RoomID, roomID)
+		return nil, fmt.Errorf("guest request does not belong to this room")
+	}
+
+	if guestRequest.Status != model.GuestStatusPending {
+		fmt.Printf("DEBUG: Invalid status: guestRequest.Status=%s\n", guestRequest.Status)
+		return nil, fmt.Errorf("guest request has already been reviewed")
+	}
+
+	var status string
+	var sessionToken string
+	var expiresAt time.Time
+	var message string
+
+	if approved {
+		status = model.GuestStatusApproved
+		message = "Guest access approved"
+
+		// Create temporary session token
+		token, err := s.generateSessionToken()
+		if err != nil {
+			fmt.Printf("DEBUG: Failed to generate session token: %v\n", err)
+			return nil, fmt.Errorf("failed to generate session token: %w", err)
+		}
+
+		sessionToken = token
+		expiresAt = time.Now().Add(24 * time.Hour) // 24 hour session
+
+		// Create guest session
+		guestSession := &model.GuestSession{
+			ID:           uuid.New(),
+			RoomID:       roomID,
+			GuestName:    guestRequest.GuestName,
+			SessionToken: sessionToken,
+			ExpiresAt:    expiresAt,
+			ApprovedBy:   hostID,
+			CreatedAt:    time.Now(),
+		}
+
+		fmt.Printf("DEBUG: Creating guest session: %+v\n", guestSession)
+		err = s.roomRepo.CreateGuestSession(ctx, guestSession)
+		if err != nil {
+			fmt.Printf("DEBUG: Failed to create guest session: %v\n", err)
+			return nil, fmt.Errorf("failed to create guest session: %w", err)
+		}
+	} else {
+		status = model.GuestStatusDenied
+		message = "Guest access denied"
+	}
+
+	// Update request status
+	fmt.Printf("DEBUG: Updating guest request status to: %s\n", status)
+	err = s.roomRepo.UpdateGuestAccessRequest(ctx, requestID, status, hostID)
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to update guest request: %v\n", err)
+		return nil, fmt.Errorf("failed to update guest request: %w", err)
+	}
+
+	// TODO: Send real-time notification to guest via WebSocket
+	fmt.Printf("Guest request %s: %s for room %s\n", status, guestRequest.GuestName, roomID.String())
+
+	return &model.ApproveGuestResponse{
+		RequestID:    requestID,
+		Status:       status,
+		SessionToken: sessionToken,
+		ExpiresAt:    expiresAt,
+		Message:      message,
+	}, nil
+}
+
+// ValidateGuestSession validates a guest session token
+func (s *Service) ValidateGuestSession(ctx context.Context, token string) (*model.GuestSession, error) {
+	session, err := s.roomRepo.GetGuestSessionByToken(ctx, token)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("invalid or expired guest session")
+		}
+		return nil, fmt.Errorf("failed to validate guest session: %w", err)
+	}
+
+	return session, nil
+}
+
+// generateSessionToken generates a secure random token for guest sessions
+func (s *Service) generateSessionToken() (string, error) {
+	bytes := make([]byte, 32)
+	_, err := rand.Read(bytes)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}
