@@ -84,3 +84,25 @@ type RoomInvitation struct {
 	UsedAt    *time.Time `json:"used_at,omitempty" db:"used_at"`
 	CreatedAt time.Time  `json:"created_at" db:"created_at"`
 }
+
+// RoomSessionDB represents a persistent room session in the database
+type RoomSessionDB struct {
+	ID          uuid.UUID  `json:"id" db:"id"`
+	RoomID      uuid.UUID  `json:"room_id" db:"room_id"`
+	HostID      uuid.UUID  `json:"host_id" db:"host_id"`
+	MovieID     uuid.UUID  `json:"movie_id" db:"movie_id"`
+	SessionName string     `json:"session_name" db:"session_name"`
+	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
+	EndedAt     *time.Time `json:"ended_at,omitempty" db:"ended_at"`
+}
+
+// RoomEvent represents an event that occurred during a session
+type RoomEvent struct {
+	ID        uuid.UUID              `json:"id" db:"id"`
+	SessionID uuid.UUID              `json:"session_id" db:"session_id"`
+	UserID    uuid.UUID              `json:"user_id" db:"user_id"`
+	EventType string                 `json:"event_type" db:"event_type"`
+	EventData map[string]interface{} `json:"event_data" db:"event_data"`
+	VideoTime *float64               `json:"video_time,omitempty" db:"video_time"`
+	Timestamp time.Time              `json:"timestamp" db:"timestamp"`
+}

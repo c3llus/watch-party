@@ -14,6 +14,7 @@ type Config struct {
 	Log       LogConfig      `json:"log"`
 	Storage   StorageConfig  `json:"storage"`
 	Email     EmailConfig    `json:"email"`
+	Redis     RedisConfig    `json:"redis"`
 }
 
 type DatabaseConfig struct {
@@ -64,6 +65,13 @@ type SendGridConfig struct {
 type EmailTemplateConfig struct {
 	BaseURL string `mapstructure:"base_url"`
 	AppName string `mapstructure:"app_name"`
+}
+
+type RedisConfig struct {
+	Host     string `mapstructure:"redis_host"`
+	Port     string `mapstructure:"redis_port"`
+	Password string `mapstructure:"redis_password"`
+	DB       int    `mapstructure:"redis_db"`
 }
 
 func init() {
@@ -118,6 +126,12 @@ func NewConfig() *Config {
 				BaseURL: getOptionalSecret("EMAIL_TEMPLATE_BASE_URL", "http://localhost:3000"),
 				AppName: getOptionalSecret("EMAIL_TEMPLATE_APP_NAME", "WatchParty"),
 			},
+		},
+		Redis: RedisConfig{
+			Host:     getOptionalSecret("REDIS_HOST", "localhost"),
+			Port:     getOptionalSecret("REDIS_PORT", "6379"),
+			Password: getOptionalSecret("REDIS_PASSWORD", ""),
+			DB:       parseOptionalInt("REDIS_DB", 0),
 		},
 	}
 }

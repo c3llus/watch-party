@@ -10,8 +10,13 @@ erDiagram
         string id PK "UUID, PK"
         string title
         string description
-        string gcs_object_path "Path to video file in GCS"
+        string storage_provider "e.g., 'gcs', 'local'"
+        string storage_path "Path to video file"
         int duration_seconds
+        bigint file_size
+        string mime_type
+        string uploaded_by FK "FK to users"
+        datetime created_at
     }
     rooms {
         string id PK "UUID, PK"
@@ -25,9 +30,55 @@ erDiagram
         string access_type "granted | guest"
         datetime granted_at
     }
+    room_invitations {
+        string id PK "UUID, PK"
+        string room_id FK "FK to rooms"
+        string inviter_id FK "FK to users"
+        string email
+        string token UK "Unique invitation token"
+        text message
+        datetime expires_at
+        datetime used_at
+        datetime created_at
+    }
+    room_sessions {
+        string id PK "UUID, PK"
+        string room_id FK "FK to rooms"
+        string host_id FK "FK to users"
+        string movie_id FK "FK to movies"
+        string session_name
+        datetime created_at
+        datetime ended_at
+    }
+    room_session_events {
+        string id PK "UUID, PK"
+        string session_id FK "FK to room_sessions"
+        string user_id FK "FK to users"
+        string event_type "join|leave|play|pause|seek|rate_change"
+        jsonb event_data "Flexible event data"
+        real video_time "Video position at event"
+        datetime timestamp
+    }
+    tokens {
+        string id PK "UUID, PK"
+        string user_id FK "FK to users"
+        string value "Token hash"
+        datetime created_at
+    }
 
-
+    %% Relationships
     users ||--o{ room_access : "is member of"
-    rooms ||--|{ room_access : "has"
-    rooms }|--|| movies : "is playing"
-    users ||--|{ rooms : "is host of"
+    users ||--o{ rooms : "hosts"
+    users ||--o{ movies : "uploads"
+    users ||--o{ room_invitations : "invites"
+    users ||--o{ room_sessions : "hosts session"
+    users ||--o{ room_session_events : "generates events"
+    users ||--o{ tokens : "has refresh tokens"
+    
+    rooms ||--|{ room_access : "has members"
+    rooms }|--|| movies : "plays"
+    rooms ||--o{ room_invitations : "has invitations"
+    rooms ||--o{ room_sessions : "has sessions"
+    
+    room_sessions ||--o{ room_session_events : "contains events"
+    room_sessions }|--|| movies : "plays movie"
