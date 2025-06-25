@@ -8,24 +8,36 @@ import (
 
 // Storage provider constants
 const (
-	StorageProviderLocal = "local"
 	StorageProviderGCS   = "gcs"
+	StorageProviderMinIO = "minio"
 )
 
 // NewStorageProvider creates a storage provider based on configuration
 func NewStorageProvider(ctx context.Context, cfg *config.StorageConfig) (Provider, error) {
 	switch cfg.Provider {
-	case StorageProviderLocal:
-		baseURL := "http://localhost:8080/api/v1/files" // Default base URL for serving files
-		return NewLocalProvider(cfg.LocalPath, baseURL), nil
-
 	case StorageProviderGCS:
 		if cfg.GCSBucket == "" {
 			return nil, fmt.Errorf("GCS bucket name is required")
 		}
 		return NewGCSProvider(ctx, cfg.GCSBucket)
 
-	default:
-		return nil, fmt.Errorf("unsupported storage provider: %s", cfg.Provider)
+	case StorageProviderMinIO:
+		if cfg.MinIO.Endpoint == "" {
+			return nil, fmt.Errorf("MinIO endpoint is required")
+		}
+		if cfg.MinIO.Bucket == "" {
+			return nil, fmt.Errorf("MinIO bucket name is required")
+		}
+		return NewMinIOProvider(
+			cfg.MinIO.Endpoint,
+			cfg.MinIO.AccessKey,
+			cfg.MinIO.SecretKey,
+			cfg.MinIO.Bucket,
+			cfg.MinIO.UseSSL,
+		)
+
 	}
+
+	return nil, fmt.Errorf("unsupported storage provider: %s. Supported providers: gcs, minio", cfg.Provider)
+
 }

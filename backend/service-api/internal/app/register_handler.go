@@ -59,6 +59,7 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 		adminRoutes.POST("/movies", a.movieController.UploadMovie)
 		adminRoutes.GET("/movies", a.movieController.GetMovies)
 		adminRoutes.GET("/movies/:id", a.movieController.GetMovie)
+		adminRoutes.GET("/movies/:id/status", a.movieController.GetMovieStatus)
 		adminRoutes.PUT("/movies/:id", a.movieController.UpdateMovie)
 		adminRoutes.DELETE("/movies/:id", a.movieController.DeleteMovie)
 		adminRoutes.GET("/movies/:id/stream", a.movieController.GetMovieStreamURL)
@@ -90,10 +91,11 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 		publicRoutes.GET("/guest/validate/:token", a.roomController.ValidateGuestSession)
 	}
 
-	// File serving for local storage (if needed)
-	// This will serve files from the uploads directory for local storage
-	if a.config.Storage.Provider == "local" {
-		api.Static("/files", a.config.Storage.LocalPath)
+	// Webhook routes (no authentication required for external services)
+	webhookRoutes := api.Group("/webhooks")
+	{
+		// Upload completion webhooks
+		webhookRoutes.POST("/upload-complete", a.webhookController.HandleUploadComplete)
 	}
 
 	return handler

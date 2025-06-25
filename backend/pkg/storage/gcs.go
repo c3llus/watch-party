@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"os"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/storage"
@@ -64,6 +66,38 @@ func (g *GCSProvider) Upload(ctx context.Context, file *multipart.FileHeader, fi
 	return filename, nil
 }
 
+// UploadFromPath uploads a file from local filesystem to GCS
+func (g *GCSProvider) UploadFromPath(ctx context.Context, localPath, storagePath string) error {
+	// Open the local file
+	file, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open local file: %w", err)
+	}
+	defer file.Close()
+
+	// Get a reference to the GCS object
+	obj := g.client.Bucket(g.bucket).Object(storagePath)
+
+	// Create a writer to the GCS object
+	writer := obj.NewWriter(ctx)
+	writer.ContentType = getContentType(localPath)
+
+	// Copy the file to GCS
+	_, err = io.Copy(writer, file)
+	if err != nil {
+		writer.Close()
+		return fmt.Errorf("failed to copy file to GCS: %w", err)
+	}
+
+	// Close the writer to finalize the upload
+	err = writer.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close GCS writer: %w", err)
+	}
+
+	return nil
+}
+
 // GetSignedURL returns a signed URL for accessing the file
 func (g *GCSProvider) GetSignedURL(ctx context.Context, path string) (string, error) {
 	// generate a signed URL valid for 1 hour
@@ -81,6 +115,60 @@ func (g *GCSProvider) GetSignedURL(ctx context.Context, path string) (string, er
 	return url, nil
 }
 
+// GenerateSignedUploadURL generates a signed URL for uploading to GCS
+func (g *GCSProvider) GenerateSignedUploadURL(ctx context.Context, filename string, opts *UploadOptions) (*SignedURL, error) {
+	if opts == nil {
+		opts = &UploadOptions{
+			ExpiresIn: time.Hour,
+		}
+	}
+
+	// set default expiration if not provided
+	if opts.ExpiresIn == 0 {
+		opts.ExpiresIn = time.Hour
+	}
+
+	// Get the bucket handle
+	bucket := g.client.Bucket(g.bucket)
+
+	// Generate signed URL for PUT method
+	opts2 := &storage.SignedURLOptions{
+		Scheme:         storage.SigningSchemeV4,
+		Method:         "PUT",
+		Expires:        time.Now().Add(opts.ExpiresIn),
+		GoogleAccessID: "", // This would need to be configured based on service account
+	}
+
+	// Set content type if provided
+	if opts.ContentType != "" {
+		opts2.ContentType = opts.ContentType
+	}
+
+	url, err := bucket.SignedURL(filename, opts2)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate GCS signed URL: %w", err)
+	}
+
+	headers := make(map[string]string)
+	if opts.ContentType != "" {
+		headers["Content-Type"] = opts.ContentType
+	}
+
+	return &SignedURL{
+		URL:       url,
+		Method:    "PUT",
+		Headers:   headers,
+		ExpiresAt: time.Now().Add(opts.ExpiresIn),
+	}, nil
+}
+
+// GetPublicURL returns a public URL for the file in GCS
+func (g *GCSProvider) GetPublicURL(ctx context.Context, path string) (string, error) {
+	// for public files in GCS, the URL format is:
+	// https://storage.googleapis.com/{bucket}/{object}
+	return fmt.Sprintf("https://storage.googleapis.com/%s/%s", g.bucket, path), nil
+}
+
 // Delete deletes a file from Google Cloud Storage
 func (g *GCSProvider) Delete(ctx context.Context, path string) error {
 	obj := g.client.Bucket(g.bucket).Object(path)
@@ -89,6 +177,29 @@ func (g *GCSProvider) Delete(ctx context.Context, path string) error {
 		return fmt.Errorf("failed to delete object from GCS: %w", err)
 	}
 	return nil
+}
+
+// ListObjects lists objects with a given prefix in GCS
+func (g *GCSProvider) ListObjects(ctx context.Context, prefix string) ([]string, error) {
+	var objects []string
+
+	it := g.client.Bucket(g.bucket).Objects(ctx, &storage.Query{
+		Prefix: prefix,
+	})
+
+	for {
+		attrs, err := it.Next()
+		if err == storage.ErrObjectNotExist {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to list objects: %w", err)
+		}
+
+		objects = append(objects, attrs.Name)
+	}
+
+	return objects, nil
 }
 
 // GetFileInfo returns information about a file in GCS
@@ -111,7 +222,50 @@ func (g *GCSProvider) GetFileInfo(ctx context.Context, path string) (*FileInfo, 
 	}, nil
 }
 
+// Download downloads a file from GCS to local filesystem
+func (g *GCSProvider) Download(ctx context.Context, storagePath, localPath string) error {
+	// Get object from GCS
+	obj := g.client.Bucket(g.bucket).Object(storagePath)
+	reader, err := obj.NewReader(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get object reader from GCS: %w", err)
+	}
+	defer reader.Close()
+
+	// Create local file
+	localFile, err := os.Create(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to create local file: %w", err)
+	}
+	defer localFile.Close()
+
+	// Copy data from GCS reader to local file
+	_, err = io.Copy(localFile, reader)
+	if err != nil {
+		return fmt.Errorf("failed to copy file data: %w", err)
+	}
+
+	return nil
+}
+
 // Close closes the GCS client
 func (g *GCSProvider) Close() error {
 	return g.client.Close()
+}
+
+// getContentType returns the MIME type based on file name
+func getContentType(filename string) string {
+	if strings.HasSuffix(filename, ".m3u8") {
+		return "application/x-mpegURL"
+	}
+	if strings.HasSuffix(filename, ".ts") {
+		return "video/MP2T"
+	}
+	if strings.HasSuffix(filename, ".mp4") {
+		return "video/mp4"
+	}
+	if strings.HasSuffix(filename, ".webm") {
+		return "video/webm"
+	}
+	return "application/octet-stream"
 }

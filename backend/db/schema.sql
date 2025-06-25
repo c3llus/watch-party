@@ -34,13 +34,17 @@ CREATE TABLE IF NOT EXISTS movies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title VARCHAR(255) NOT NULL,
     description TEXT,
-    storage_provider VARCHAR(50) NOT NULL DEFAULT 'local',
-    storage_path VARCHAR(500) NOT NULL,
+    original_file_path VARCHAR(500) NOT NULL DEFAULT '',
+    transcoded_file_path VARCHAR(500) NOT NULL DEFAULT '',
+    hls_playlist_url VARCHAR(500) NOT NULL DEFAULT '',
     duration_seconds INTEGER NOT NULL DEFAULT 0,
     file_size BIGINT NOT NULL DEFAULT 0,
     mime_type VARCHAR(100) NOT NULL DEFAULT 'application/octet-stream',
+    status VARCHAR(50) NOT NULL DEFAULT 'processing',
     uploaded_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    processing_started_at TIMESTAMP WITH TIME ZONE,
+    processing_ended_at TIMESTAMP WITH TIME ZONE
 );
 
 -- =================================================================
@@ -206,13 +210,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- =================================================================
--- Default Data
+-- Seed Data
 -- =================================================================
 
--- Create a default admin user for system operations.
--- The password hash is a placeholder and should be replaced in a real environment.
 INSERT INTO users (email, password_hash, role)
-VALUES ('admin@example.com', '$2a$10$dummy.hash.for.initial.setup', 'admin')
+VALUES ('marcellus@c3llus.dev', '$2a$10$vz3m3NI53x6g4ynoGXMMk.6kufWPCWm/Tzo6I1L9XRom1AItzFvpS', 'admin')
 ON CONFLICT (email) DO NOTHING;
 
 -- =================================================================
@@ -220,4 +222,4 @@ ON CONFLICT (email) DO NOTHING;
 -- =================================================================
 COMMENT ON DATABASE watch_party IS 'Database for the Watch Party application. Real-time sync is handled by Redis, while PostgreSQL manages persistent data.';
 COMMENT ON TABLE room_sessions IS 'Session metadata for video watching sessions. Real-time sync state moved to Redis.';
-COMMENT ON TABLE room_session_events IS 'Audit log of user actions during video sessions. Real-time events handled via
+COMMENT ON TABLE room_session_events IS 'Audit log of user actions during video sessions. Real-time events handled via Redis.';

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"watch-party/pkg/auth"
 	"watch-party/pkg/logger"
 	"watch-party/pkg/model"
 	"watch-party/service-sync/internal/service"
@@ -18,14 +20,16 @@ import (
 
 // SyncHandler handles HTTP requests for sync service
 type SyncHandler struct {
-	service  service.SyncService
-	upgrader websocket.Upgrader
+	service    service.SyncService
+	jwtManager *auth.JWTManager
+	upgrader   websocket.Upgrader
 }
 
 // NewSyncHandler creates a new sync handler instance
-func NewSyncHandler(service service.SyncService) *SyncHandler {
+func NewSyncHandler(service service.SyncService, jwtManager *auth.JWTManager) *SyncHandler {
 	return &SyncHandler{
-		service: service,
+		service:    service,
+		jwtManager: jwtManager,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				// allow all origins for development
@@ -94,22 +98,11 @@ func (h *SyncHandler) HandleWebSocket(c *gin.Context) {
 		userID = uuid.New()
 		username = validationResp.GuestName + " (Guest)"
 	} else {
-		// Handle authenticated user connection
-		userIDStr := c.Query("user_id")
-		if userIDStr == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "User ID or guest token required"})
-			return
-		}
-
-		userID, err = uuid.Parse(userIDStr)
+		// Handle authenticated user connection - use JWT token
+		userID, username, err = h.getUserFromToken(c)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing authentication token"})
 			return
-		}
-
-		username = c.Query("username")
-		if username == "" {
-			username = "Anonymous"
 		}
 	}
 
@@ -188,27 +181,33 @@ func (h *SyncHandler) GetRoomParticipants(c *gin.Context) {
 // in production, these would be middleware
 
 func (h *SyncHandler) getUserFromToken(c *gin.Context) (uuid.UUID, string, error) {
-	// extract JWT token from Authorization header
-	// validate and parse token
-	// return user ID and username
-	// placeholder implementation
-	userIDStr := c.GetHeader("X-User-ID")
-	username := c.GetHeader("X-Username")
-
-	if userIDStr == "" {
-		return uuid.Nil, "", fmt.Errorf("user ID not found")
+	// Extract JWT token from Authorization header
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		return uuid.Nil, "", fmt.Errorf("authorization header required")
 	}
 
-	userID, err := uuid.Parse(userIDStr)
+	// Extract Bearer token
+	bearerToken := strings.Split(authHeader, " ")
+	if len(bearerToken) != 2 || bearerToken[0] != "Bearer" {
+		return uuid.Nil, "", fmt.Errorf("invalid authorization header format")
+	}
+
+	tokenString := bearerToken[1]
+
+	// Use the injected JWT manager to validate the token
+	claims, err := h.jwtManager.ValidateToken(tokenString)
 	if err != nil {
-		return uuid.Nil, "", fmt.Errorf("invalid user ID")
+		return uuid.Nil, "", fmt.Errorf("invalid token: %w", err)
 	}
 
+	// Extract username from email (simple approach) or use a separate username field
+	username := strings.Split(claims.Email, "@")[0]
 	if username == "" {
-		username = "Anonymous"
+		username = "User"
 	}
 
-	return userID, username, nil
+	return claims.UserID, username, nil
 }
 
 func (h *SyncHandler) extractPaginationParams(c *gin.Context) (int, int) {

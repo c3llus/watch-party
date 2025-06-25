@@ -24,7 +24,7 @@ func NewMovieController(movieService movieService.Service) *MovieController {
 	}
 }
 
-// UploadMovie handles movie upload - ADMIN ONLY
+// UploadMovie handles movie upload initiation - ADMIN ONLY
 func (mc *MovieController) UploadMovie(c *gin.Context) {
 	// get uploader ID from context (set by auth middleware)
 	uploaderID, exists := c.Get("user_id")
@@ -39,29 +39,20 @@ func (mc *MovieController) UploadMovie(c *gin.Context) {
 		return
 	}
 
-	// parse form data
+	// parse JSON request body (no longer multipart form)
 	var req model.UploadMovieRequest
-	err := c.ShouldBind(&req)
+	err := c.ShouldBindJSON(&req)
 	if err != nil {
 		logger.Error(err, "failed to bind upload movie request")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request data"})
 		return
 	}
 
-	// get uploaded file
-	file, err := c.FormFile("video")
+	// initiate upload (create movie record and get signed URL)
+	response, err := mc.movieService.InitiateUpload(c.Request.Context(), &req, userID)
 	if err != nil {
-		logger.Error(err, "failed to get uploaded file")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "video file is required"})
-		return
-	}
+		logger.Error(err, "failed to initiate movie upload")
 
-	// upload movie
-	movie, err := mc.movieService.UploadMovie(c.Request.Context(), &req, file, userID)
-	if err != nil {
-		logger.Error(err, "failed to upload movie")
-
-		// TODO: error dict
 		if err.Error() == "unsupported video format" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported video format"})
 			return
@@ -71,15 +62,12 @@ func (mc *MovieController) UploadMovie(c *gin.Context) {
 			return
 		}
 
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to upload movie"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to initiate upload"})
 		return
 	}
 
-	logger.Infof("movie uploaded successfully: %s", movie.Title)
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "movie uploaded successfully",
-		"movie":   movie,
-	})
+	logger.Infof("upload initiated for movie: %s", req.Title)
+	c.JSON(http.StatusCreated, response)
 }
 
 // GetMovies handles listing all movies - ADMIN ONLY
@@ -237,4 +225,29 @@ func (mc *MovieController) GetMyMovies(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// GetMovieStatus handles getting movie processing status - ADMIN ONLY
+func (mc *MovieController) GetMovieStatus(c *gin.Context) {
+	// get movie ID from URL parameter
+	movieIDStr := c.Param("id")
+	movieID, err := uuid.Parse(movieIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid movie ID"})
+		return
+	}
+
+	// get movie status
+	status, err := mc.movieService.GetMovieStatus(c.Request.Context(), movieID)
+	if err != nil {
+		if err.Error() == "movie not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "movie not found"})
+			return
+		}
+		logger.Error(err, "failed to get movie status")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get movie status"})
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
 }

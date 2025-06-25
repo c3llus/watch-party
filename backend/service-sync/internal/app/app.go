@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"watch-party/pkg/auth"
 	"watch-party/pkg/config"
 	"watch-party/pkg/logger"
 	"watch-party/pkg/redis"
@@ -42,8 +43,11 @@ func NewSyncServer(cfg *config.Config) *syncServer {
 	// initialize service
 	syncService := service.NewSyncService(syncRepo, redisClient)
 
+	// initialize JWT manager
+	jwtManager := auth.NewJWTManager(cfg.JWTSecret)
+
 	// initialize handler
-	syncHandler := handler.NewSyncHandler(syncService)
+	syncHandler := handler.NewSyncHandler(syncService, jwtManager)
 
 	return &syncServer{
 		config:      cfg,

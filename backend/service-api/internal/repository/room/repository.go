@@ -49,8 +49,9 @@ func (r *Repository) GetRoomWithDetails(ctx context.Context, roomID uuid.UUID) (
 	query := `
 		SELECT 
 			r.id, r.movie_id, r.host_id, r.created_at,
-			m.id, m.title, m.description, m.storage_provider, m.storage_path,
-			m.duration_seconds, m.file_size, m.mime_type, m.uploaded_by, m.created_at,
+			m.id, m.title, m.description, m.original_file_path, m.transcoded_file_path,
+			m.hls_playlist_url, m.duration_seconds, m.file_size, m.mime_type, m.status,
+			m.uploaded_by, m.created_at, m.processing_started_at, m.processing_ended_at,
 			u.id, u.email, u.role, u.created_at
 		FROM rooms r
 		JOIN movies m ON r.movie_id = m.id
@@ -61,9 +62,10 @@ func (r *Repository) GetRoomWithDetails(ctx context.Context, roomID uuid.UUID) (
 	err := row.Scan(
 		&roomDetails.ID, &roomDetails.MovieID, &roomDetails.HostID, &roomDetails.CreatedAt,
 		&roomDetails.Movie.ID, &roomDetails.Movie.Title, &roomDetails.Movie.Description,
-		&roomDetails.Movie.StorageProvider, &roomDetails.Movie.StoragePath,
-		&roomDetails.Movie.DurationSeconds, &roomDetails.Movie.FileSize,
-		&roomDetails.Movie.MimeType, &roomDetails.Movie.UploadedBy, &roomDetails.Movie.CreatedAt,
+		&roomDetails.Movie.OriginalFilePath, &roomDetails.Movie.TranscodedFilePath,
+		&roomDetails.Movie.HLSPlaylistURL, &roomDetails.Movie.DurationSeconds, &roomDetails.Movie.FileSize,
+		&roomDetails.Movie.MimeType, &roomDetails.Movie.Status, &roomDetails.Movie.UploadedBy, &roomDetails.Movie.CreatedAt,
+		&roomDetails.Movie.ProcessingStartedAt, &roomDetails.Movie.ProcessingEndedAt,
 		&roomDetails.Host.ID, &roomDetails.Host.Email, &roomDetails.Host.Role, &roomDetails.Host.CreatedAt,
 	)
 	if err != nil {

@@ -11,8 +11,10 @@ import (
 	"watch-party/pkg/config"
 	"watch-party/pkg/database"
 	"watch-party/pkg/email"
+	"watch-party/pkg/events"
 	"watch-party/pkg/logger"
 	"watch-party/pkg/storage"
+	"watch-party/pkg/video"
 	mdw "watch-party/service-api/internal/app/middleware"
 	ctl "watch-party/service-api/internal/controller"
 	authRepo "watch-party/service-api/internal/repository/auth"
@@ -26,11 +28,12 @@ import (
 )
 
 type appServer struct {
-	config          *config.Config
-	middleware      mdw.MiddlewareProvider
-	controller      ctl.ControllerProvider
-	movieController *ctl.MovieController
-	roomController  *ctl.RoomController
+	config            *config.Config
+	middleware        mdw.MiddlewareProvider
+	controller        ctl.ControllerProvider
+	movieController   *ctl.MovieController
+	roomController    *ctl.RoomController
+	webhookController *ctl.WebhookController
 }
 
 // NewAppServer creates a new instance of appServer with the provided configuration, middleware, and controller.
@@ -65,20 +68,32 @@ func NewAppServer(cfg *config.Config) *appServer {
 	movieSvc := movieService.NewMovieService(movieRepository, storageProvider)
 	roomSvc := roomService.NewService(roomRepository, userRepository, emailService, cfg)
 
+	// initialize event handler dependencies
+	tempDir := cfg.Storage.VideoProcessing.TempDir
+	hlsBaseURL := cfg.Storage.VideoProcessing.HLSBaseURL
+
+	// create video processor
+	videoProcessor := video.NewProcessor(storageProvider, tempDir)
+
+	// create upload event handler
+	uploadHandler := events.NewHandler(movieRepository, storageProvider, videoProcessor, hlsBaseURL, tempDir)
+
 	// initialize controllers
 	controller := ctl.NewController(authSvc)
 	movieController := ctl.NewMovieController(movieSvc)
 	roomController := ctl.NewRoomController(roomSvc)
+	webhookController := ctl.NewWebhookController(uploadHandler)
 
 	// initialize middleware
 	middleware := mdw.NewMiddleware()
 
 	return &appServer{
-		config:          cfg,
-		middleware:      middleware,
-		controller:      controller,
-		movieController: movieController,
-		roomController:  roomController,
+		config:            cfg,
+		middleware:        middleware,
+		controller:        controller,
+		movieController:   movieController,
+		roomController:    roomController,
+		webhookController: webhookController,
 	}
 }
 

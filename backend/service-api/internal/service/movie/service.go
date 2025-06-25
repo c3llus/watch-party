@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"mime/multipart"
 	"path/filepath"
 	"strings"
 	"time"
@@ -34,13 +33,14 @@ var supportedFormats = map[string]bool{
 
 // Service defines the movie service interface
 type Service interface {
-	UploadMovie(ctx context.Context, req *model.UploadMovieRequest, file *multipart.FileHeader, uploaderID uuid.UUID) (*model.Movie, error)
+	InitiateUpload(ctx context.Context, req *model.UploadMovieRequest, uploaderID uuid.UUID) (*model.MovieUploadResponse, error)
 	GetMovie(ctx context.Context, id uuid.UUID) (*model.Movie, error)
 	GetMovies(ctx context.Context, page, pageSize int) (*model.MovieListResponse, error)
 	GetMoviesByUploader(ctx context.Context, uploaderID uuid.UUID, page, pageSize int) (*model.MovieListResponse, error)
 	UpdateMovie(ctx context.Context, id uuid.UUID, req *model.UploadMovieRequest) (*model.Movie, error)
 	DeleteMovie(ctx context.Context, id uuid.UUID) error
 	GetMovieStreamURL(ctx context.Context, id uuid.UUID) (string, error)
+	GetMovieStatus(ctx context.Context, id uuid.UUID) (*model.MovieStatusResponse, error)
 }
 
 // movieService provides movie-related services.
@@ -57,52 +57,67 @@ func NewMovieService(movieRepo movieRepo.Repository, storageProvider storage.Pro
 	}
 }
 
-// UploadMovie uploads a movie file and stores its metadata
-func (s *movieService) UploadMovie(ctx context.Context, req *model.UploadMovieRequest, file *multipart.FileHeader, uploaderID uuid.UUID) (*model.Movie, error) {
-	// validate file
-	err := s.validateFile(file)
+// InitiateUpload creates a movie record and returns signed URL for upload
+func (s *movieService) InitiateUpload(ctx context.Context, req *model.UploadMovieRequest, uploaderID uuid.UUID) (*model.MovieUploadResponse, error) {
+	// validate request
+	err := s.validateUploadRequest(req)
 	if err != nil {
 		return nil, err
 	}
 
 	// generate unique filename
-	ext := filepath.Ext(file.Filename)
-	filename := fmt.Sprintf("%s_%d%s", uuid.New().String(), time.Now().Unix(), ext)
+	ext := filepath.Ext(req.FileName)
+	filename := fmt.Sprintf("uploads/%s_%d%s", uuid.New().String(), time.Now().Unix(), ext)
 
-	// upload file to storage
-	storagePath, err := s.storageProvider.Upload(ctx, file, filename)
-	if err != nil {
-		logger.Error(err, "failed to upload movie file")
-		return nil, fmt.Errorf("failed to upload file: %w", err)
-	}
-
-	// create movie record
+	// create movie record with processing status
 	movie := &model.Movie{
-		ID:              uuid.New(),
-		Title:           req.Title,
-		Description:     req.Description,
-		StorageProvider: s.getStorageProviderType(),
-		StoragePath:     storagePath,
-		DurationSeconds: 0, // Will be updated later if needed
-		FileSize:        file.Size,
-		MimeType:        s.getMimeType(ext),
-		UploadedBy:      uploaderID,
-		CreatedAt:       time.Now(),
+		ID:                  uuid.New(),
+		Title:               req.Title,
+		Description:         req.Description,
+		OriginalFilePath:    filename, // will be the final path after upload
+		TranscodedFilePath:  "",
+		HLSPlaylistURL:      "",
+		DurationSeconds:     0,
+		FileSize:            req.FileSize,
+		MimeType:            s.getMimeTypeFromFilename(req.FileName),
+		Status:              model.StatusProcessing,
+		UploadedBy:          uploaderID,
+		CreatedAt:           time.Now(),
+		ProcessingStartedAt: nil,
+		ProcessingEndedAt:   nil,
 	}
 
-	// save to database
+	// save movie record to database
 	err = s.movieRepo.Create(movie)
 	if err != nil {
-		// if database save fails, try to cleanup uploaded file
-		deleteErr := s.storageProvider.Delete(ctx, storagePath)
-		if deleteErr != nil {
-			logger.Error(deleteErr, "failed to cleanup uploaded file after database error")
-		}
-		return nil, fmt.Errorf("failed to save movie metadata: %w", err)
+		return nil, fmt.Errorf("failed to create movie record: %w", err)
 	}
 
-	logger.Infof("movie uploaded successfully: %s (ID: %s)", movie.Title, movie.ID)
-	return movie, nil
+	// generate signed URL for upload
+	uploadOpts := &storage.UploadOptions{
+		ContentType: movie.MimeType,
+		MaxFileSize: req.FileSize,
+		ExpiresIn:   time.Hour, // URL expires in 1 hour
+		Public:      false,
+	}
+
+	signedURL, err := s.storageProvider.GenerateSignedUploadURL(ctx, filename, uploadOpts)
+	if err != nil {
+		// cleanup movie record if signed URL generation fails
+		deleteErr := s.movieRepo.Delete(movie.ID)
+		if deleteErr != nil {
+			logger.Error(deleteErr, "failed to cleanup movie record after signed URL generation failed")
+		}
+		return nil, fmt.Errorf("failed to generate signed upload URL: %w", err)
+	}
+
+	logger.Infof("upload initiated for movie %s: %s", movie.Title, movie.ID)
+
+	return &model.MovieUploadResponse{
+		MovieID:   movie.ID,
+		SignedURL: signedURL.URL,
+		Message:   "Upload initiated successfully. Use the signed URL to upload your video file.",
+	}, nil
 }
 
 // GetMovie retrieves a movie by ID
@@ -204,11 +219,21 @@ func (s *movieService) DeleteMovie(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 
-	// delete file from storage
-	err = s.storageProvider.Delete(ctx, movie.StoragePath)
-	if err != nil {
-		logger.Error(err, "failed to delete movie file from storage")
-		// don't return error here as the database record is already deleted
+	// delete original file from storage if it exists
+	if movie.OriginalFilePath != "" {
+		err = s.storageProvider.Delete(ctx, movie.OriginalFilePath)
+		if err != nil {
+			logger.Error(err, "failed to delete original movie file from storage")
+		}
+	}
+
+	// delete transcoded files from storage if they exist
+	if movie.TranscodedFilePath != "" {
+		// delete all transcoded files (this would need implementation based on storage structure)
+		err = s.deleteTranscodedFiles(ctx, movie.TranscodedFilePath)
+		if err != nil {
+			logger.Error(err, "failed to delete transcoded files from storage")
+		}
 	}
 
 	logger.Infof("movie deleted successfully: %s (ID: %s)", movie.Title, id)
@@ -225,31 +250,104 @@ func (s *movieService) GetMovieStreamURL(ctx context.Context, id uuid.UUID) (str
 		return "", ErrMovieNotFound
 	}
 
-	// get signed URL from storage provider
-	url, err := s.storageProvider.GetSignedURL(ctx, movie.StoragePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to generate stream URL: %w", err)
+	// if movie is not available yet, return error
+	if movie.Status != model.StatusAvailable {
+		return "", fmt.Errorf("movie is not ready for streaming (status: %s)", movie.Status)
 	}
 
-	return url, nil
+	// return HLS playlist URL if available
+	if movie.HLSPlaylistURL != "" {
+		return movie.HLSPlaylistURL, nil
+	}
+
+	// fallback to original file (though this shouldn't happen in the new workflow)
+	if movie.OriginalFilePath != "" {
+		url, err := s.storageProvider.GetSignedURL(ctx, movie.OriginalFilePath)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate stream URL: %w", err)
+		}
+		return url, nil
+	}
+
+	return "", fmt.Errorf("no streamable content available for movie")
 }
 
-// validateFile validates the uploaded file
-func (s *movieService) validateFile(file *multipart.FileHeader) error {
-	if file == nil {
-		return ErrInvalidFile
+// GetMovieStatus returns the processing status of a movie
+func (s *movieService) GetMovieStatus(ctx context.Context, id uuid.UUID) (*model.MovieStatusResponse, error) {
+	movie, err := s.movieRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if movie == nil {
+		return nil, ErrMovieNotFound
 	}
 
-	// check file extension
-	ext := strings.ToLower(filepath.Ext(file.Filename))
+	response := &model.MovieStatusResponse{
+		MovieID:             movie.ID,
+		Status:              movie.Status,
+		Title:               movie.Title,
+		ProcessingStartedAt: movie.ProcessingStartedAt,
+		ProcessingEndedAt:   movie.ProcessingEndedAt,
+	}
+
+	// include HLS URL if available
+	if movie.Status == model.StatusAvailable && movie.HLSPlaylistURL != "" {
+		response.HLSPlaylistURL = movie.HLSPlaylistURL
+	}
+
+	// include error message for failed movies (you might want to add an error field to the Movie model)
+	if movie.Status == model.StatusFailed {
+		response.ErrorMessage = "Video processing failed"
+	}
+
+	return response, nil
+}
+
+// validateUploadRequest validates the upload request
+func (s *movieService) validateUploadRequest(req *model.UploadMovieRequest) error {
+	if req.Title == "" {
+		return fmt.Errorf("title is required")
+	}
+
+	// validate file extension
+	ext := strings.ToLower(filepath.Ext(req.FileName))
 	if !supportedFormats[ext] {
 		return ErrUnsupportedFormat
 	}
 
-	// check file size (max 5GB)
+	// validate file size (max 5GB)
 	const maxFileSize = 5 * 1024 * 1024 * 1024 // 5GB
-	if file.Size > maxFileSize {
-		return fmt.Errorf("file size too large: %d bytes (max: %d bytes)", file.Size, maxFileSize)
+	if req.FileSize > maxFileSize {
+		return fmt.Errorf("file size too large: %d bytes (max: %d bytes)", req.FileSize, maxFileSize)
+	}
+
+	if req.FileSize <= 0 {
+		return fmt.Errorf("invalid file size: %d", req.FileSize)
+	}
+
+	return nil
+}
+
+// getMimeTypeFromFilename returns the MIME type based on file extension
+func (s *movieService) getMimeTypeFromFilename(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	return s.getMimeType(ext)
+}
+
+// deleteTranscodedFiles deletes all transcoded files for a movie
+func (s *movieService) deleteTranscodedFiles(ctx context.Context, transcodedPath string) error {
+	// list all files under the transcoded path
+	files, err := s.storageProvider.ListObjects(ctx, transcodedPath)
+	if err != nil {
+		return fmt.Errorf("failed to list transcoded files: %w", err)
+	}
+
+	// delete each file
+	for _, file := range files {
+		err = s.storageProvider.Delete(ctx, file)
+		if err != nil {
+			logger.Error(err, fmt.Sprintf("failed to delete transcoded file: %s", file))
+		}
 	}
 
 	return nil
@@ -273,11 +371,4 @@ func (s *movieService) getMimeType(ext string) string {
 	default:
 		return "application/octet-stream"
 	}
-}
-
-// getStorageProviderType returns the storage provider type
-func (s *movieService) getStorageProviderType() string {
-	// this is a simplified approach - in a real implementation,
-	// you might want to pass this information to the service
-	return model.StorageProviderLocal // Default
 }

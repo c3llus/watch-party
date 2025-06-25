@@ -35,10 +35,27 @@ type LogConfig struct {
 }
 
 type StorageConfig struct {
-	Provider           string `mapstructure:"storage_provider"`
-	LocalPath          string `mapstructure:"storage_local_path"`
-	GCSBucket          string `mapstructure:"storage_gcs_bucket"`
-	GCSCredentialsPath string `mapstructure:"storage_gcs_credentials_path"`
+	Provider           string      `mapstructure:"storage_provider"`
+	GCSBucket          string      `mapstructure:"storage_gcs_bucket"`
+	GCSCredentialsPath string      `mapstructure:"storage_gcs_credentials_path"`
+	MinIO              MinIOConfig `mapstructure:"minio"`
+	VideoProcessing    VideoConfig `mapstructure:"video_processing"`
+}
+
+type MinIOConfig struct {
+	Endpoint       string `mapstructure:"endpoint"`
+	AccessKey      string `mapstructure:"access_key"`
+	SecretKey      string `mapstructure:"secret_key"`
+	Bucket         string `mapstructure:"bucket"`
+	UseSSL         bool   `mapstructure:"use_ssl"`
+	PublicEndpoint string `mapstructure:"public_endpoint"` // For public URLs (if different from endpoint)
+}
+
+type VideoConfig struct {
+	TempDir     string `mapstructure:"temp_dir"`
+	HLSBaseURL  string `mapstructure:"hls_base_url"`
+	FFmpegPath  string `mapstructure:"ffmpeg_path"`
+	FFprobePath string `mapstructure:"ffprobe_path"`
 }
 
 type EmailConfig struct {
@@ -103,10 +120,23 @@ func NewConfig() *Config {
 			Level: getOptionalSecret("LOG_LEVEL", "info"),
 		},
 		Storage: StorageConfig{
-			Provider:           getOptionalSecret("STORAGE_PROVIDER", "local"),
-			LocalPath:          getOptionalSecret("STORAGE_LOCAL_PATH", "./uploads"),
+			Provider:           getOptionalSecret("STORAGE_PROVIDER", "minio"),
 			GCSBucket:          getOptionalSecret("STORAGE_GCS_BUCKET", ""),
 			GCSCredentialsPath: getOptionalSecret("STORAGE_GCS_CREDENTIALS_PATH", ""),
+			MinIO: MinIOConfig{
+				Endpoint:       getOptionalSecret("MINIO_ENDPOINT", "localhost:9000"),
+				AccessKey:      getOptionalSecret("MINIO_ACCESS_KEY", "minioadmin"),
+				SecretKey:      getOptionalSecret("MINIO_SECRET_KEY", "minioadmin"),
+				Bucket:         getOptionalSecret("MINIO_BUCKET", "watch-party"),
+				UseSSL:         parseBool("MINIO_USE_SSL"),
+				PublicEndpoint: getOptionalSecret("MINIO_PUBLIC_ENDPOINT", ""),
+			},
+			VideoProcessing: VideoConfig{
+				TempDir:     getOptionalSecret("VIDEO_PROCESSING_TEMP_DIR", "/tmp/watch-party-processing"),
+				HLSBaseURL:  getOptionalSecret("VIDEO_HLS_BASE_URL", "http://localhost:8080/api/v1/files"),
+				FFmpegPath:  getOptionalSecret("FFMPEG_PATH", "ffmpeg"),
+				FFprobePath: getOptionalSecret("FFPROBE_PATH", "ffprobe"),
+			},
 		},
 		Email: EmailConfig{
 			Provider: getOptionalSecret("EMAIL_PROVIDER", "smtp"),
