@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -45,23 +46,71 @@ func (h *SyncHandler) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
-	// get user info from query parameters or headers
-	// in production, you would extract this from JWT token
-	userIDStr := c.Query("user_id")
-	if userIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID required"})
-		return
-	}
+	// check for guest session token first
+	guestToken := c.Query("guestToken")
+	var userID uuid.UUID
+	var username string
 
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
-		return
-	}
+	if guestToken != "" {
+		// handle guest connection
+		// validate guest session token with API service
+		resp, err := http.Get(fmt.Sprintf("http://localhost:8080/api/v1/guest/validate/%s", guestToken))
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Failed to validate guest session"})
+			return
+		}
+		defer resp.Body.Close()
 
-	username := c.Query("username")
-	if username == "" {
-		username = "Anonymous"
+		if resp.StatusCode != http.StatusOK {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired guest session"})
+			return
+		}
+
+		// parse validation response
+		var validationResp struct {
+			Valid     bool   `json:"valid"`
+			RoomID    string `json:"room_id"`
+			GuestName string `json:"guest_name"`
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(&validationResp)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse guest session"})
+			return
+		}
+
+		if !validationResp.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Guest session is not valid"})
+			return
+		}
+
+		// verify room ID matches
+		if validationResp.RoomID != roomID.String() {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Guest session is for a different room"})
+			return
+		}
+
+		// generate temporary UUID for guest session
+		userID = uuid.New()
+		username = validationResp.GuestName + " (Guest)"
+	} else {
+		// Handle authenticated user connection
+		userIDStr := c.Query("user_id")
+		if userIDStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "User ID or guest token required"})
+			return
+		}
+
+		userID, err = uuid.Parse(userIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+			return
+		}
+
+		username = c.Query("username")
+		if username == "" {
+			username = "Anonymous"
+		}
 	}
 
 	// upgrade HTTP connection to WebSocket
