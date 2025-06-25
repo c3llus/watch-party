@@ -66,6 +66,11 @@ func (c *Client) Subscribe(ctx context.Context, channels ...string) *redis.PubSu
 	return c.client.Subscribe(ctx, channels...)
 }
 
+// PSubscribe subscribes to Redis channels using pattern matching
+func (c *Client) PSubscribe(ctx context.Context, patterns ...string) *redis.PubSub {
+	return c.client.PSubscribe(ctx, patterns...)
+}
+
 // Set sets a key-value pair with expiration
 func (c *Client) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
 	data, err := json.Marshal(value)

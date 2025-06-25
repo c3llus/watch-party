@@ -67,7 +67,7 @@ func (s *syncServer) Serve() {
 	s.setupRoutes(router)
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%s", s.getSyncPort()),
+		Addr:    fmt.Sprintf(":%s", s.config.Port),
 		Handler: router,
 	}
 

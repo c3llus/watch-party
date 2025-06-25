@@ -7,14 +7,14 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/backend/service-api/cmd",
-            "envFile": "${workspaceFolder}/backend/.env"
+            "envFile": "${workspaceFolder}/backend/service-api/cmd/.env"
         }, {
             "name": "backend-service-sync",
             "type": "go",
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/backend/service-sync/cmd",
-            "envFile": "${workspaceFolder}/backend/.env"
+            "envFile": "${workspaceFolder}/backend/service-sync/cmd/.env"
         }
     ]
 }

@@ -50,10 +50,13 @@ func (h *SyncHandler) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
-	// check for guest session token first
+	var (
+		userID   uuid.UUID
+		username string
+	)
+
+	// check for guest session token
 	guestToken := c.Query("guestToken")
-	var userID uuid.UUID
-	var username string
 
 	if guestToken != "" {
 		// handle guest connection

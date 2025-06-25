@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -246,13 +247,12 @@ func (s *syncService) BroadcastSync(ctx context.Context, message *model.SyncMess
 	err := s.syncRepo.PublishEvent(ctx, message.RoomID, message)
 	if err != nil {
 		logger.Error(err, "failed to publish event to Redis")
+		// fallback to local broadcast if Redis fails
+		s.broadcastToRoom(message.RoomID, &model.WebSocketMessage{
+			Type:    model.MessageTypeSync,
+			Payload: message,
+		})
 	}
-
-	// broadcast to local connections
-	s.broadcastToRoom(message.RoomID, &model.WebSocketMessage{
-		Type:    model.MessageTypeSync,
-		Payload: message,
-	})
 
 	return nil
 }
@@ -342,13 +342,48 @@ func (s *syncService) handleConnectionMessages(ctx context.Context, roomID, user
 
 // handleRedisMessages handles Redis pub/sub messages for cross-instance sync
 func (s *syncService) handleRedisMessages() {
-	// this would subscribe to all room events, but for now we'll implement
-	// room-specific subscriptions when connections are established
 	logger.Info("Redis message handler started")
 
-	// TODO: Implement proper Redis subscription handling
-	// This would typically involve:
-	// 1. Subscribing to a global sync channel
-	// 2. Processing incoming sync events
-	// 3. Broadcasting to local connections
+	ctx := context.Background()
+
+	// subscribe to all room events using pattern matching
+	pubsub := s.redis.PSubscribe(ctx, "room:*:events")
+	defer pubsub.Close()
+
+	ch := pubsub.Channel()
+	for msg := range ch {
+		logger.Debugf("Received Redis message on channel: %s", msg.Channel)
+
+		// parse the sync message
+		var syncMessage model.SyncMessage
+		if err := json.Unmarshal([]byte(msg.Payload), &syncMessage); err != nil {
+			logger.Errorf(err, "failed to unmarshal sync message from Redis")
+			continue
+		}
+
+		logger.Debugf("Parsed sync message: room=%s, action=%s, user=%s",
+			syncMessage.RoomID, syncMessage.Action, syncMessage.Username)
+
+		// check if we have any local connections for this room
+		s.connMutex.RLock()
+		roomConnections, hasRoom := s.connections[syncMessage.RoomID]
+		connectionCount := 0
+		if hasRoom {
+			connectionCount = len(roomConnections)
+		}
+		s.connMutex.RUnlock()
+
+		if hasRoom && connectionCount > 0 {
+			logger.Debugf("Broadcasting Redis message to %d local connections in room %s",
+				connectionCount, syncMessage.RoomID)
+
+			// broadcast to local connections (this handles cross-instance sync)
+			s.broadcastToRoom(syncMessage.RoomID, &model.WebSocketMessage{
+				Type:    model.MessageTypeSync,
+				Payload: &syncMessage,
+			})
+		} else {
+			logger.Debugf("No local connections for room %s, skipping broadcast", syncMessage.RoomID)
+		}
+	}
 }
