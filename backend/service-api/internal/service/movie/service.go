@@ -116,6 +116,7 @@ func (s *movieService) InitiateUpload(ctx context.Context, req *model.UploadMovi
 	return &model.MovieUploadResponse{
 		MovieID:   movie.ID,
 		SignedURL: signedURL.URL,
+		FilePath:  filename,
 		Message:   "Upload initiated successfully. Use the signed URL to upload your video file.",
 	}, nil
 }

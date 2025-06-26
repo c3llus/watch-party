@@ -60,6 +60,7 @@ type MovieListResponse struct {
 type MovieUploadResponse struct {
 	MovieID   uuid.UUID `json:"movie_id"`
 	SignedURL string    `json:"signed_url"`
+	FilePath  string    `json:"file_path"`
 	Message   string    `json:"message"`
 }
 

@@ -18,7 +18,7 @@ sequenceDiagram
 
     Admin->>Storage: Upload video file
     Storage-->>Admin: Upload complete
-    Storage->>API: Webhook notification
+    Admin->>API: Webhook notification
     API->>DB: Update status to processing
     
     Note over Processor, Storage: Background HLS transcoding
