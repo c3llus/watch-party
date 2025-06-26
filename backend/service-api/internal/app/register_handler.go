@@ -5,6 +5,7 @@ import (
 	"watch-party/pkg/model"
 	middleware "watch-party/service-api/internal/app/middleware"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -15,6 +16,15 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 	// middlewares
 	handler.Use(gin.Logger())
 	handler.Use(gin.Recovery())
+
+	// cors middleware
+	corsConfig := cors.Config{
+		AllowOrigins:     a.config.CORS.AllowedOrigins,
+		AllowMethods:     a.config.CORS.AllowedMethods,
+		AllowHeaders:     a.config.CORS.AllowedHeaders,
+		AllowCredentials: true,
+	}
+	handler.Use(cors.New(corsConfig))
 
 	// create JWT middleware
 	jwtManager := auth.NewJWTManager(a.config.JWTSecret)

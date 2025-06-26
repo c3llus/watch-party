@@ -15,6 +15,7 @@ type Config struct {
 	Storage   StorageConfig  `json:"storage"`
 	Email     EmailConfig    `json:"email"`
 	Redis     RedisConfig    `json:"redis"`
+	CORS      CORSConfig     `json:"cors"`
 }
 
 type DatabaseConfig struct {
@@ -91,6 +92,12 @@ type RedisConfig struct {
 	DB       int    `mapstructure:"redis_db"`
 }
 
+type CORSConfig struct {
+	AllowedOrigins []string `mapstructure:"cors_allowed_origins"`
+	AllowedMethods []string `mapstructure:"cors_allowed_methods"`
+	AllowedHeaders []string `mapstructure:"cors_allowed_headers"`
+}
+
 func init() {
 	if !isGCP {
 		err := godotenv.Load()
@@ -162,6 +169,11 @@ func NewConfig() *Config {
 			Port:     getOptionalSecret("REDIS_PORT", "6379"),
 			Password: getOptionalSecret("REDIS_PASSWORD", ""),
 			DB:       parseOptionalInt("REDIS_DB", 0),
+		},
+		CORS: CORSConfig{
+			AllowedOrigins: parseOptionalStringSlice("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173,http://localhost:5174"),
+			AllowedMethods: parseOptionalStringSlice("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS"),
+			AllowedHeaders: parseOptionalStringSlice("CORS_ALLOWED_HEADERS", "Content-Type,Authorization"),
 		},
 	}
 }

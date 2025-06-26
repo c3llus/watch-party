@@ -17,6 +17,7 @@ import (
 	"watch-party/service-sync/internal/repository"
 	"watch-party/service-sync/internal/service"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -62,6 +63,15 @@ func (s *syncServer) Serve() {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())
+
+	// cors middleware
+	corsConfig := cors.Config{
+		AllowOrigins:     s.config.CORS.AllowedOrigins,
+		AllowMethods:     s.config.CORS.AllowedMethods,
+		AllowHeaders:     s.config.CORS.AllowedHeaders,
+		AllowCredentials: true,
+	}
+	router.Use(cors.New(corsConfig))
 
 	// setup routes
 	s.setupRoutes(router)

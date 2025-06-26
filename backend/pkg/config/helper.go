@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -85,4 +86,22 @@ func parseOptionalInt(key string, defaultValue int) int {
 		return defaultValue
 	}
 	return parsed
+}
+
+// parseOptionalStringSlice parses a comma-separated string into a slice
+func parseOptionalStringSlice(key, defaultValue string) []string {
+	val := getOptionalSecret(key, defaultValue)
+	if val == "" {
+		return []string{}
+	}
+	// split by comma and trim whitespace
+	parts := strings.Split(val, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
