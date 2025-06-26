@@ -153,7 +153,7 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_tokens_value ON tokens(value);
 CREATE INDEX IF NOT EXISTS idx_tokens_user_id ON tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_movies_uploaded_by ON movies(uploaded_by);
-CREATE INDEX IF NOT EXISTS idx_movies_storage_provider ON movies(storage_provider);
+CREATE INDEX IF NOT EXISTS idx_movies_status ON movies(status);
 CREATE INDEX IF NOT EXISTS idx_rooms_movie_id ON rooms(movie_id);
 CREATE INDEX IF NOT EXISTS idx_rooms_host_id ON rooms(host_id);
 CREATE INDEX IF NOT EXISTS idx_room_access_room_id ON room_access(room_id);
@@ -173,8 +173,6 @@ CREATE INDEX IF NOT EXISTS idx_guest_requests_status ON guest_access_requests(st
 CREATE INDEX IF NOT EXISTS idx_guest_sessions_room ON guest_sessions(room_id);
 CREATE INDEX IF NOT EXISTS idx_guest_sessions_token ON guest_sessions(session_token);
 CREATE INDEX IF NOT EXISTS idx_guest_sessions_expires ON guest_sessions(expires_at);
-CREATE INDEX IF NOT EXISTS idx_guest_requests_room ON guest_access_requests(room_id);
-CREATE INDEX IF NOT EXISTS idx_guest_requests_status ON guest_access_requests(status);
 
 -- =================================================================
 -- Helper Functions

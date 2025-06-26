@@ -32,9 +32,27 @@ services:
     networks:
       - watch_party_network
 
+  minio:
+    image: minio/minio:latest
+    container_name: watch-party-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: ["server", "/data", "--console-address", ":9001"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - watch_party_network
+
 volumes:
   postgres_data:
   redis_data:
+  minio_data:
 
 networks:
   watch_party_network:
