@@ -1,0 +1,41 @@
+sequenceDiagram
+    participant Admin as Admin Client
+    participant API as API Service
+    participant Storage as MinIO/GCS
+    participant Processor as Video Processor
+    participant DB as PostgreSQL
+
+    Note over Admin, DB: Asynchronous Video Upload - Direct to storage with HLS transcoding
+
+    Admin->>API: Initiate video upload
+    API->>DB: Create movie record
+    DB-->>API: Movie ID created
+    API->>Storage: Generate upload URL
+    Storage-->>API: Signed URL (1h expiry)
+    API-->>Admin: Upload URL + movie ID
+
+    Note over Admin, Storage: Direct upload bypasses backend
+
+    Admin->>Storage: Upload video file
+    Storage-->>Admin: Upload complete
+    Storage->>API: Webhook notification
+    API->>DB: Update status to processing
+    
+    Note over Processor, Storage: Background HLS transcoding
+
+    API->>Processor: Start transcoding
+    Processor->>Storage: Download original
+    Processor->>Processor: Generate HLS variants
+    Processor->>Storage: Upload HLS files
+    Processor->>DB: Update status to available
+
+    Note over Admin: Poll for completion
+
+    loop Status polling
+        Admin->>API: Check movie status
+        API->>DB: Get current status
+        DB-->>API: Status + HLS URL
+        API-->>Admin: Processing status
+    end
+
+    Note over Admin, DB: Movie ready for room creation

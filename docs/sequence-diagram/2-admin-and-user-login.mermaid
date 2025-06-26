@@ -1,18 +1,25 @@
 sequenceDiagram
-    participant U as User
-    participant API as api-service
+    participant Client as Client (Admin/User)
+    participant API as API Service
     participant DB as PostgreSQL
-    participant Cache as Redis
+    participant Redis as Redis Cache
 
-    U->>API: POST /auth/login (email, password)
-    API->>API: Validate input
-    API->>DB: SELECT id, password_hash, role FROM users WHERE email = ?
-    DB-->>API: User record
-    API->>API: Verify password against hash
-    alt Credentials are valid
-        API->>API: Generate JWT (access token) & Refresh Token
-        API->>Cache: STORE refresh_token_hash
-        API-->>U: HTTP 200 OK (access_token, refresh_token, user_profile)
-    else Credentials are invalid
-        API-->>U: HTTP 401 Unauthorized
+    Note over Client, Redis: JWT authentication - same flow for admin and users
+
+    Client->>API: POST /auth/login
+    API->>API: validate credentials
+    API->>DB: verify user exists
+    DB-->>API: user profile + role
+    API->>API: check password hash
+    
+    alt valid credentials
+        API->>API: generate JWT token
+        API->>Redis: cache session data
+        API-->>Client: login success + JWT
+        
+        Note over Client: can now access protected endpoints
+    else invalid credentials
+        API-->>Client: login failed (401)
+        
+        Note over Client: must retry with correct credentials
     end

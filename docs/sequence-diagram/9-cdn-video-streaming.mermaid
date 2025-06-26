@@ -1,0 +1,53 @@
+sequenceDiagram
+    participant Client as Video Client
+    participant API as API Service
+    participant Storage as MinIO/GCS
+    participant CDN as Cloudflare CDN
+    participant DB as PostgreSQL
+
+    Note over Client, DB: CDN-friendly video streaming - backend generates signed URLs only
+
+    Client->>API: request HLS playlist + JWT
+    API->>API: validate JWT token
+    API->>DB: check room access
+    DB-->>API: access confirmed
+    
+    API->>Storage: generate signed URL
+    Storage-->>API: signed URL (2h expiry)
+    API-->>Client: HLS URL + cache headers
+
+    Note over Client, CDN: direct CDN access bypasses backend
+
+    Client->>CDN: request HLS playlist
+    
+    alt CDN cache hit
+        CDN-->>Client: cached playlist
+    else CDN cache miss
+        CDN->>Storage: fetch from storage
+        Storage-->>CDN: HLS content + headers
+        CDN->>CDN: cache for 1 hour
+        CDN-->>Client: fresh content
+    end
+
+    Note over Client, CDN: video segments served from CDN
+
+    loop video playback
+        Client->>CDN: request video segments
+        alt CDN cache hit
+            CDN-->>Client: cached segments
+        else CDN cache miss
+            CDN->>Storage: fetch segments
+            Storage-->>CDN: video data
+            CDN->>CDN: cache for 24 hours
+            CDN-->>Client: video segments
+        end
+    end
+
+    Note over Client, Storage: batch URL generation for performance
+
+    Client->>API: request multiple URLs
+    API->>Storage: generate batch signed URLs
+    Storage-->>API: multiple signed URLs
+    API-->>Client: URL batch response
+
+    Note over Client, CDN: all video delivery via CDN - backend only for auth

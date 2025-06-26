@@ -1,39 +1,46 @@
 sequenceDiagram
     participant Guest as Guest User
-    participant API as api-service
+    participant API as API Service
     participant DB as PostgreSQL
-    participant Sync as sync-service
-    participant Host as Host
+    participant Sync as Sync Service
+    participant Host as Room Host
 
-    Note over Guest, Host: Future: Guest Access Request Flow
+    Note over Guest, Host: guest access request - no account required
+
+    %% guest requests access
+    Guest->>API: visit room link (no auth)
+    API->>DB: get room details
+    DB-->>API: room info
+    API-->>Guest: guest access form
     
-    %% Guest discovers room
-    Guest->>API: GET /rooms/join/{roomId} (no auth)
-    API->>DB: SELECT room WHERE id = ?
-    API-->>Guest: Room info + "Request Access" form
+    Guest->>API: submit access request
+    API->>DB: store guest request
+    DB-->>API: request created
+    API-->>Guest: request submitted
     
-    %% Guest requests access
-    Guest->>API: POST /rooms/{roomId}/request-access {"name": "John", "message": "Can I join?"}
-    API->>DB: INSERT INTO guest_access_requests (status='pending')
-    API-->>Guest: Request submitted, please wait
+    %% real-time host notification
+    API->>Sync: notify host of request
+    Sync->>Host: guest wants to join
     
-    %% Real-time notification to host
-    API->>Sync: Notify host about guest request
-    Sync->>Host: {"type": "GUEST_REQUEST", "data": {"name": "John", "message": "..."}}
+    Note over Host: host sees approval dialog
+
+    %% host approval
+    Host->>API: approve guest request
+    API->>DB: update request status
+    API->>DB: create guest session
+    DB-->>API: session token created
     
-    %% Host reviews request
-    Note over Host: UI shows "John wants to join [Approve] [Deny]"
-    Host->>API: POST /rooms/{roomId}/guest-requests/{requestId}/approve
-    API->>DB: UPDATE guest_access_requests SET status='approved'
+    %% guest gets access
+    API->>Sync: send approval to guest
+    Sync->>Guest: access approved + token
     
-    %% Notify guest of approval
-    API->>Sync: Guest approved notification
-    Sync->>Guest: {"type": "ACCESS_APPROVED", "data": {"guestToken": "temp123"}}
+    Guest->>Sync: connect with guest token
+    Sync->>API: validate guest session
+    API->>DB: check token validity
+    DB-->>API: valid session
+    API-->>Sync: access granted
     
-    %% Guest joins room
-    Guest->>Sync: WebSocket connect /ws/room/{roomId}?guestToken=temp123
-    Sync->>DB: Validate guest token (temporary access)
-    Sync-->>Guest: Connected as guest
-    Sync-->>Host: Broadcast "Guest John joined"
-    
-    Note over Guest, Host: Guest has temporary access for this session only
+    Sync-->>Guest: connected to room
+    Sync->>Host: guest joined notification
+
+    Note over Guest, Host: guest has temporary session access

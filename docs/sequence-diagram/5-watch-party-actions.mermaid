@@ -1,9 +1,31 @@
 sequenceDiagram
     participant Host as Host Client
-    participant P as Participant Client
-    participant Sync as sync-service
+    participant User as User Client  
+    participant Guest as Guest Client
+    participant Sync as Sync Services
+    participant Redis as Redis Pub/Sub
 
-    Host->>Sync: SEND {"type": "PLAY", "payload": {"timestamp": 12345}}
-    Sync->>Sync: Validate sender is the room's host
-    alt Sender is Host
-        Sync->>Sync: Update authoritative room state (isPlaying: true)
+    Note over Host, Redis: real-time video synchronization - any user can control playback
+
+    %% any user performs action
+    Host->>Sync: play video at 45.6s
+    
+    Sync->>Redis: broadcast sync event
+    Redis->>Sync: distribute to all instances
+    
+    Sync->>Host: update video
+    Sync->>User: update video
+    Sync->>Guest: update video
+
+    Note over Host, Guest: all players synchronized
+
+    %% cross-instance example
+    User->>Sync: seek to 120s
+    Sync->>Redis: broadcast sync event
+    Redis->>Sync: distribute to all instances
+    
+    Sync->>Host: update video
+    Sync->>User: update video  
+    Sync->>Guest: update video
+
+    Note over Host, Guest: all players stay in sync

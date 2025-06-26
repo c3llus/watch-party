@@ -10,13 +10,17 @@ erDiagram
         string id PK "UUID, PK"
         string title
         string description
-        string storage_provider "e.g., 'gcs', 'local'"
-        string storage_path "Path to video file"
+        string original_file_path "Path to original uploaded file"
+        string transcoded_file_path "Path to transcoded HLS directory"
+        string hls_playlist_url "Public URL to .m3u8 file"
         int duration_seconds
         bigint file_size
         string mime_type
+        string status "processing|transcoding|available|failed"
         string uploaded_by FK "FK to users"
         datetime created_at
+        datetime processing_started_at "When transcoding started"
+        datetime processing_ended_at "When transcoding completed"
     }
     rooms {
         string id PK "UUID, PK"
@@ -42,15 +46,24 @@ erDiagram
         datetime reviewed_at
     }
     room_invitations {
-        string id PK "UUID, PK - DEPRECATED"
-        string room_id FK "FK to rooms - DEPRECATED"
-        string inviter_id FK "FK to users - DEPRECATED"
-        string email "DEPRECATED"
-        string token UK "Unique invitation token - DEPRECATED"
-        text message "DEPRECATED"
-        datetime expires_at "DEPRECATED"
-        datetime used_at "DEPRECATED"
-        datetime created_at "DEPRECATED"
+        string id PK "UUID, PK"
+        string room_id FK "FK to rooms"
+        string inviter_id FK "FK to users"
+        string email
+        string token UK "Unique invitation token"
+        text message
+        datetime expires_at
+        datetime used_at
+        datetime created_at
+    }
+    guest_sessions {
+        string id PK "UUID, PK"
+        string room_id FK "FK to rooms"
+        string guest_name
+        string session_token UK "Unique session token"
+        datetime expires_at
+        string approved_by FK "FK to users"
+        datetime created_at
     }
     room_sessions {
         string id PK "UUID, PK"
@@ -85,11 +98,15 @@ erDiagram
     users ||--o{ room_session_events : "generates events"
     users ||--o{ tokens : "has refresh tokens"
     users ||--o{ guest_access_requests : "reviews requests"
+    users ||--o{ room_invitations : "sends invitations"
+    users ||--o{ guest_sessions : "approves guests"
     
     rooms ||--|{ room_access : "has members"
     rooms }|--|| movies : "plays"
     rooms ||--o{ room_sessions : "has sessions"
     rooms ||--o{ guest_access_requests : "receives requests"
+    rooms ||--o{ room_invitations : "has invitations"
+    rooms ||--o{ guest_sessions : "has guest sessions"
     
     room_sessions ||--o{ room_session_events : "contains events"
     room_sessions }|--|| movies : "plays movie"

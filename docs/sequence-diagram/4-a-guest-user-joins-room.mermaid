@@ -1,39 +1,35 @@
 sequenceDiagram
-    participant Guest as Guest User (Not Logged In)
-    participant API as api-service
-    participant Host as Host Client
-    participant Sync as sync-service
+    participant Guest as Guest User
+    participant API as API Service
+    participant Host as Room Host
+    participant Sync as Sync Service
     participant DB as PostgreSQL
 
-    Note over Guest: User visits persistent room link: /rooms/join/{roomId}
-    Note over Guest: No JWT token (unauthenticated)
+    Note over Guest, DB: guest access request - no account required
+
+    Guest->>API: visit room link
+    API->>DB: verify room exists
+    DB-->>API: room details
+    API-->>Guest: guest join form
     
-    Guest->>API: GET /rooms/join/{roomId}
-    Note over Guest, API: No authentication header
-    API->>DB: SELECT * FROM rooms WHERE id = ?
-    DB-->>API: Room exists confirmation
-    API-->>Guest: HTTP 200 OK {"guestAccessAllowed": true, "roomTitle": "...", "requiresApproval": true}
+    Guest->>API: request access
+    API->>DB: store guest request
+    DB-->>API: request created
+    API->>Sync: notify host
+    Sync->>Host: guest wants to join
     
-    Note over Guest: Shows guest join form with name input
-    Guest->>API: POST /rooms/{roomId}/request-access {"guestName": "John", "message": "Hi, I'd like to join!"}
-    API->>DB: INSERT INTO guest_access_requests (room_id, guest_name, request_message, status) VALUES (?, 'John', ?, 'pending')
-    DB-->>API: Request ID created
-    API-->>Guest: HTTP 202 Accepted {"requestId": "...", "status": "pending"}
+    Note over Host: host sees join request notification
+
+    Host->>API: approve guest
+    API->>DB: update request status
+    DB-->>API: status updated
+    API->>API: generate guest token
+    API->>Sync: send approval
+    Sync->>Guest: access approved + token
     
-    Note over API: Notify host via WebSocket about pending request
-    API->>Sync: Send host notification about guest access request
-    Sync->>Host: SEND {"type": "GUEST_ACCESS_REQUEST", "payload": {"requestId": "...", "guestName": "John", "message": "..."}}
-    
-    Note over Host: UI shows "John wants to join. [Admit] [Deny]"
-    Host->>API: POST /rooms/{roomId}/guest-requests/{requestId}/approve
-    API->>DB: UPDATE guest_access_requests SET status='approved', reviewed_by=?, reviewed_at=NOW() WHERE id=?
-    DB-->>API: Update confirmed
-    
-    API->>Sync: Notify guest about approval
-    Sync->>Guest: SEND {"type": "ACCESS_APPROVED", "payload": {"roomId": "...", "wsUrl": "/ws/room/{roomId}?guestToken=..."}}
-    
-    Guest->>Sync: WebSocket Upgrade Request to /ws/room/{roomId}?guestToken=...
-    Sync->>Sync: Validate guest token and add to room participants
-    Sync-->>Guest: WebSocket Connection Established
-    Sync->>Guest: SEND {"type": "ROOM_STATE", "payload": {...}}
-    Sync->>Host: BROADCAST {"type": "USER_JOINED", "payload": {"name": "John", "type": "guest"}}
+    Guest->>Sync: connect WebSocket
+    Sync->>Sync: validate guest token
+    Sync-->>Guest: connected to room
+    Sync->>Host: guest joined room
+
+    Note over Guest, Host: guest can now participate in watch party
