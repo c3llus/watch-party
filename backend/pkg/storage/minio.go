@@ -231,21 +231,21 @@ func (m *minioProvider) UploadReader(ctx context.Context, reader io.Reader, remo
 
 // Download downloads a file from MinIO to local filesystem
 func (m *minioProvider) Download(ctx context.Context, storagePath, localPath string) error {
-	// Get object from MinIO
+	// get object from MinIO
 	obj, err := m.client.GetObject(ctx, m.bucket, storagePath, minio.GetObjectOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get object from MinIO: %w", err)
 	}
 	defer obj.Close()
 
-	// Create local file
+	// create local file
 	localFile, err := os.Create(localPath)
 	if err != nil {
 		return fmt.Errorf("failed to create local file: %w", err)
 	}
 	defer localFile.Close()
 
-	// Copy data from MinIO object to local file
+	// copy data from MinIO object to local file
 	_, err = io.Copy(localFile, obj)
 	if err != nil {
 		return fmt.Errorf("failed to copy file data: %w", err)
@@ -298,4 +298,64 @@ func getContentTypeFromPath(path string) string {
 		return "video/webm"
 	}
 	return "application/octet-stream"
+}
+
+// GenerateCDNSignedURL generates a CDN-friendly signed URL with custom options
+func (m *minioProvider) GenerateCDNSignedURL(ctx context.Context, path string, opts *CDNSignedURLOptions) (string, error) {
+	if opts == nil {
+		opts = &CDNSignedURLOptions{
+			ExpiresIn: time.Hour * 2,
+		}
+	}
+
+	// set default expiration if not provided
+	expiration := opts.ExpiresIn
+	if expiration == 0 {
+		expiration = time.Hour * 2
+	}
+
+	// create request parameters with cache control headers
+	reqParams := make(map[string][]string)
+	if opts.CacheControl != "" {
+		reqParams["response-cache-control"] = []string{opts.CacheControl}
+	}
+	if opts.ContentType != "" {
+		reqParams["response-content-type"] = []string{opts.ContentType}
+	}
+
+	// generate presigned URL
+	presignedURL, err := m.client.PresignedGetObject(ctx, m.bucket, path, expiration, reqParams)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+
+	return presignedURL.String(), nil
+}
+
+// GenerateSignedURLs generates signed URLs for multiple files (CDN-friendly)
+func (m *minioProvider) GenerateSignedURLs(ctx context.Context, paths []string, opts *CDNSignedURLOptions) (map[string]string, error) {
+	if opts == nil {
+		opts = &CDNSignedURLOptions{
+			ExpiresIn: time.Hour * 2,
+		}
+	}
+
+	result := make(map[string]string)
+
+	// Generate URLs for each path
+	for _, path := range paths {
+		signedURL, err := m.GenerateCDNSignedURL(ctx, path, opts)
+		if err != nil {
+			// Continue with other URLs but log the error
+			continue
+		}
+		result[path] = signedURL
+	}
+
+	// Return error if no URLs were generated successfully
+	if len(result) == 0 {
+		return nil, fmt.Errorf("failed to generate any signed URLs")
+	}
+
+	return result, nil
 }

@@ -269,3 +269,71 @@ func getContentType(filename string) string {
 	}
 	return "application/octet-stream"
 }
+
+// GenerateCDNSignedURL generates a CDN-friendly signed URL with custom options
+func (g *GCSProvider) GenerateCDNSignedURL(ctx context.Context, path string, opts *CDNSignedURLOptions) (string, error) {
+	if opts == nil {
+		opts = &CDNSignedURLOptions{
+			ExpiresIn: time.Hour * 2,
+		}
+	}
+	// Set default expiration if not provided
+	expiration := opts.ExpiresIn
+	if expiration == 0 {
+		expiration = time.Hour * 2
+	}
+
+	// Set up signed URL options
+	signOpts := &storage.SignedURLOptions{
+		Scheme:  storage.SigningSchemeV4,
+		Method:  "GET",
+		Expires: time.Now().Add(expiration),
+	}
+
+	// Add response headers for CDN optimization
+	if opts.CacheControl != "" || opts.ContentType != "" {
+		signOpts.QueryParameters = make(map[string][]string)
+		if opts.CacheControl != "" {
+			signOpts.QueryParameters["response-cache-control"] = []string{opts.CacheControl}
+		}
+		if opts.ContentType != "" {
+			signOpts.QueryParameters["response-content-type"] = []string{opts.ContentType}
+		}
+	}
+
+	// Generate signed URL using storage.SignedURL function
+	signedURL, err := storage.SignedURL(g.bucket, path, signOpts)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate signed URL: %w", err)
+	}
+
+	return signedURL, nil
+}
+
+// GenerateSignedURLs generates signed URLs for multiple files (CDN-friendly)
+func (g *GCSProvider) GenerateSignedURLs(ctx context.Context, paths []string, opts *CDNSignedURLOptions) (map[string]string, error) {
+	if opts == nil {
+		opts = &CDNSignedURLOptions{
+			ExpiresIn: time.Hour * 2,
+		}
+	}
+
+	result := make(map[string]string)
+
+	// Generate URLs for each path
+	for _, path := range paths {
+		signedURL, err := g.GenerateCDNSignedURL(ctx, path, opts)
+		if err != nil {
+			// Continue with other URLs but log the error
+			continue
+		}
+		result[path] = signedURL
+	}
+
+	// Return error if no URLs were generated successfully
+	if len(result) == 0 {
+		return nil, fmt.Errorf("failed to generate any signed URLs")
+	}
+
+	return result, nil
+}

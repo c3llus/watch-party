@@ -28,12 +28,15 @@ import (
 )
 
 type appServer struct {
-	config            *config.Config
-	middleware        mdw.MiddlewareProvider
-	controller        ctl.ControllerProvider
-	movieController   *ctl.MovieController
-	roomController    *ctl.RoomController
-	webhookController *ctl.WebhookController
+	config                *config.Config
+	middleware            mdw.MiddlewareProvider
+	controller            ctl.ControllerProvider
+	movieController       *ctl.MovieController
+	roomController        *ctl.RoomController
+	webhookController     *ctl.WebhookController
+	streamingController   *ctl.StreamingController
+	videoAccessController *ctl.VideoAccessController
+	roomService           *roomService.Service
 }
 
 // NewAppServer creates a new instance of appServer with the provided configuration, middleware, and controller.
@@ -83,17 +86,22 @@ func NewAppServer(cfg *config.Config) *appServer {
 	movieController := ctl.NewMovieController(movieSvc)
 	roomController := ctl.NewRoomController(roomSvc)
 	webhookController := ctl.NewWebhookController(uploadHandler)
+	streamingController := ctl.NewStreamingController(storageProvider, movieSvc)
+	videoAccessController := ctl.NewVideoAccessController(storageProvider, movieSvc)
 
 	// initialize middleware
 	middleware := mdw.NewMiddleware()
 
 	return &appServer{
-		config:            cfg,
-		middleware:        middleware,
-		controller:        controller,
-		movieController:   movieController,
-		roomController:    roomController,
-		webhookController: webhookController,
+		config:                cfg,
+		middleware:            middleware,
+		controller:            controller,
+		movieController:       movieController,
+		roomController:        roomController,
+		webhookController:     webhookController,
+		streamingController:   streamingController,
+		videoAccessController: videoAccessController,
+		roomService:           roomSvc,
 	}
 }
 

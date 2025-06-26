@@ -296,3 +296,36 @@ func (r *Repository) CleanupExpiredGuestSessions(ctx context.Context) error {
 	_, err := r.db.ExecContext(ctx, query)
 	return err
 }
+
+// CheckUserMovieAccess checks if a user has access to stream a specific movie
+// by verifying they are a member of a room containing that movie
+func (r *Repository) CheckUserMovieAccess(ctx context.Context, userID uuid.UUID, movieID uuid.UUID) (bool, error) {
+	query := `
+		SELECT COUNT(*) 
+		FROM room_access ra
+		JOIN rooms r ON ra.room_id = r.id
+		WHERE ra.user_id = $1 
+		  AND r.movie_id = $2 
+		  AND ra.status = 'granted'`
+
+	var count int
+	err := r.db.QueryRowContext(ctx, query, userID, movieID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+// CheckRoomContainsMovie verifies if a specific room contains the given movie
+func (r *Repository) CheckRoomContainsMovie(ctx context.Context, roomID uuid.UUID, movieID uuid.UUID) (bool, error) {
+	query := `SELECT COUNT(*) FROM rooms WHERE id = $1 AND movie_id = $2`
+
+	var count int
+	err := r.db.QueryRowContext(ctx, query, roomID, movieID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}

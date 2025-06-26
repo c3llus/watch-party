@@ -468,3 +468,14 @@ func (s *Service) generateSessionToken() (string, error) {
 	}
 	return hex.EncodeToString(bytes), nil
 }
+
+// CheckUserMovieAccess checks if a user has access to stream a specific movie
+// by verifying they are a member of a room containing that movie
+func (s *Service) CheckUserMovieAccess(ctx context.Context, userID uuid.UUID, movieID uuid.UUID) (bool, error) {
+	return s.roomRepo.CheckUserMovieAccess(ctx, userID, movieID)
+}
+
+// CheckRoomContainsMovie verifies if a specific room contains the given movie
+func (s *Service) CheckRoomContainsMovie(ctx context.Context, roomID uuid.UUID, movieID uuid.UUID) (bool, error) {
+	return s.roomRepo.CheckRoomContainsMovie(ctx, roomID, movieID)
+}

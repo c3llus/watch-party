@@ -8,40 +8,25 @@ import (
 
 // Provider defines the interface for storage providers
 type Provider interface {
-	// Upload uploads a file and returns the storage path
 	Upload(ctx context.Context, file *multipart.FileHeader, filename string) (string, error)
-
-	// UploadFromPath uploads a file from local filesystem to storage
 	UploadFromPath(ctx context.Context, localPath, storagePath string) error
-
-	// GenerateSignedUploadURL generates a signed URL for client-side upload
 	GenerateSignedUploadURL(ctx context.Context, filename string, opts *UploadOptions) (*SignedURL, error)
-
-	// GetSignedURL returns a signed URL for accessing the file
 	GetSignedURL(ctx context.Context, path string) (string, error)
-
-	// Download downloads a file from storage to a local file
 	Download(ctx context.Context, storagePath, localPath string) error
-
-	// Delete deletes a file from storage
 	Delete(ctx context.Context, path string) error
-
-	// GetFileInfo returns basic information about a file
 	GetFileInfo(ctx context.Context, path string) (*FileInfo, error)
-
-	// GetPublicURL returns a public URL for the file (for HLS playlists)
 	GetPublicURL(ctx context.Context, path string) (string, error)
-
-	// ListObjects lists objects in a directory/prefix
 	ListObjects(ctx context.Context, prefix string) ([]string, error)
+	GenerateSignedURLs(ctx context.Context, paths []string, opts *CDNSignedURLOptions) (map[string]string, error)
+	GenerateCDNSignedURL(ctx context.Context, path string, opts *CDNSignedURLOptions) (string, error)
 }
 
 // SignedURL represents a signed URL for upload
 type SignedURL struct {
 	URL        string            `json:"url"`
-	Method     string            `json:"method"`                // HTTP method (PUT, POST)
-	Headers    map[string]string `json:"headers"`               // Required headers
-	FormFields map[string]string `json:"form_fields,omitempty"` // For POST-based uploads
+	Method     string            `json:"method"`                // http method (PUT, POST)
+	Headers    map[string]string `json:"headers"`               // required headers
+	FormFields map[string]string `json:"form_fields,omitempty"` // for POST-based uploads
 	ExpiresAt  time.Time         `json:"expires_at"`
 }
 
@@ -60,4 +45,12 @@ type UploadOptions struct {
 	MaxFileSize int64
 	ExpiresIn   time.Duration // Duration for signed URL validity
 	Public      bool
+}
+
+// CDNSignedURLOptions represents options for CDN-friendly signed URLs
+type CDNSignedURLOptions struct {
+	ExpiresIn    time.Duration // Duration for URL validity
+	CacheControl string        // Cache-Control header value
+	Organization string        // Organization scope for multi-tenant access
+	ContentType  string        // Override content type
 }
