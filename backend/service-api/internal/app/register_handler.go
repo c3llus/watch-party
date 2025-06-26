@@ -38,13 +38,7 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 			auth.POST("/logout", a.controller.Logout)
 		}
 
-		// admin routes
-		admin := api.Group("/admin")
-		{
-			admin.POST("/register", a.controller.RegisterAdmin)
-		}
-
-		// user routes
+		// user routes - public registration for freemium users
 		users := api.Group("/users")
 		{
 			users.POST("/register", a.controller.RegisterUser)
