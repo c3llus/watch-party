@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:saas": "tsc -b && vite build --mode production",
+    "build:selfhost": "tsc -b && vite build --mode production",
     "lint": "eslint .",
     "preview": "vite preview"
   },

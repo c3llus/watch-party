@@ -1,0 +1,15 @@
+sequenceDiagram
+    participant User as User Client
+    participant API as API Service
+    participant DB as PostgreSQL
+
+    Note over User, DB: regular user registration - self-service signup (admin accounts already exist)
+
+    User->>API: POST /users/register  
+    API->>API: validate input data
+    API->>API: hash password (bcrypt)
+    API->>DB: store regular user
+    DB-->>API: user created
+    API-->>User: registration success
+
+    Note over User, API: user can now login and access platform
