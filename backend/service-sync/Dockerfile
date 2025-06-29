@@ -4,7 +4,7 @@ FROM golang:1.24-alpine AS builder
 WORKDIR /app
 
 # copy go mod files
-COPY ../../go.mod ../../go.sum ./
+COPY go.mod go.sum ./
 
 # download dependencies
 RUN go mod download
@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 
 # build the service
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/sync-service cmd/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/sync-service ./service-sync/cmd/main.go
 
 # runtime stage
 FROM alpine:latest

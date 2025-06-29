@@ -71,17 +71,21 @@ type RoomSession struct {
 
 // WebSocketMessage represents the structure of WebSocket messages
 type WebSocketMessage struct {
-	Type    string      `json:"type"`
-	Payload interface{} `json:"payload"`
+	Type    WebSocketEventType `json:"type"`
+	Payload any                `json:"payload"`
 }
+
+type WebSocketEventType string
 
 // WebSocket message types
 const (
-	MessageTypeSync         = "sync"
-	MessageTypeState        = "state"
-	MessageTypeParticipants = "participants"
-	MessageTypeError        = "error"
-	MessageTypeHeartbeat    = "heartbeat"
+	MessageTypeSync         WebSocketEventType = "sync"
+	MessageTypeState        WebSocketEventType = "state"
+	MessageTypeParticipants WebSocketEventType = "participants"
+	MessageTypeError        WebSocketEventType = "error"
+	MessageTypeHeartbeat    WebSocketEventType = "heartbeat"
+	MessageTypeRequestState WebSocketEventType = "request_state"
+	MessageTypeProvideState WebSocketEventType = "provide_state"
 )
 
 // ErrorMessage represents an error message

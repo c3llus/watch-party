@@ -272,6 +272,7 @@ func getContentType(filename string) string {
 
 // GenerateCDNSignedURL generates a CDN-friendly signed URL with custom options
 func (g *GCSProvider) GenerateCDNSignedURL(ctx context.Context, path string, opts *CDNSignedURLOptions) (string, error) {
+	// TODO: real CDN support
 	if opts == nil {
 		opts = &CDNSignedURLOptions{
 			ExpiresIn: time.Hour * 2,

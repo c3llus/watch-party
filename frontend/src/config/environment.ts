@@ -60,8 +60,3 @@ export const config = getEnvironmentConfig()
 export const isDevelopment = config.mode === 'development'
 export const isSaasMode = config.mode === 'production-saas'
 export const isSelfHosted = config.mode === 'production-selfhost'
-
-// debug info (only in development)
-if (isDevelopment) {
-  console.log('environment config:', config)
-}

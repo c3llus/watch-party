@@ -14,8 +14,7 @@ export default function SignupPage() {
 
     try {
       // regular user registration - self-service signup
-      const result = await authService.register({ email, password })
-      console.log('user registered successfully:', result.user.email)
+      await authService.register({ email, password })
       
       // redirect to login page after successful registration
       window.location.href = '/login'

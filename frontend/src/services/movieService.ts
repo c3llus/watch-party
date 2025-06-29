@@ -116,13 +116,14 @@ export class MovieService {
 
   // get movies uploaded by current user
   async getMyMovies(page = 1, pageSize = 20): Promise<MovieListResponse> {
-    return apiClient.get<MovieListResponse>(`/admin/movies/mine?page=${page}&page_size=${pageSize}`)
+    return apiClient.get<MovieListResponse>(`/admin/movies?page=${page}&page_size=${pageSize}`)
   }
 
   // notify backend that upload is complete (triggers transcoding)
-  async notifyUploadComplete(movieId: string): Promise<void> {
+  async notifyUploadComplete(movieId: string, filePath: string): Promise<void> {
     return apiClient.post<void>('/webhooks/upload-complete', {
-      movie_id: movieId
+      movie_id: movieId,
+      file_path: filePath
     })
   }
 

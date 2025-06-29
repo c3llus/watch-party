@@ -34,6 +34,7 @@ func NewStorageProvider(ctx context.Context, cfg *config.StorageConfig) (Provide
 			cfg.MinIO.SecretKey,
 			cfg.MinIO.Bucket,
 			cfg.MinIO.UseSSL,
+			cfg.MinIO.PublicEndpoint,
 		)
 
 	}

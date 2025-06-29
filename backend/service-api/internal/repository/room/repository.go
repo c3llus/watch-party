@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"time"
+	"watch-party/pkg/logger"
 	"watch-party/pkg/model"
 
 	"github.com/google/uuid"
@@ -22,20 +23,20 @@ func NewRepository(db *sql.DB) *Repository {
 // CreateRoom creates a new room
 func (r *Repository) CreateRoom(ctx context.Context, room *model.Room) error {
 	query := `
-		INSERT INTO rooms (id, movie_id, host_id, created_at)
-		VALUES ($1, $2, $3, $4)`
+		INSERT INTO rooms (id, movie_id, host_id, name, description, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`
 
-	_, err := r.db.ExecContext(ctx, query, room.ID, room.MovieID, room.HostID, room.CreatedAt)
+	_, err := r.db.ExecContext(ctx, query, room.ID, room.MovieID, room.HostID, room.Name, room.Description, room.CreatedAt)
 	return err
 }
 
 // GetRoomByID retrieves a room by ID
 func (r *Repository) GetRoomByID(ctx context.Context, roomID uuid.UUID) (*model.Room, error) {
 	var room model.Room
-	query := `SELECT id, movie_id, host_id, created_at FROM rooms WHERE id = $1`
+	query := `SELECT id, movie_id, host_id, name, description, created_at FROM rooms WHERE id = $1`
 
 	row := r.db.QueryRowContext(ctx, query, roomID)
-	err := row.Scan(&room.ID, &room.MovieID, &room.HostID, &room.CreatedAt)
+	err := row.Scan(&room.ID, &room.MovieID, &room.HostID, &room.Name, &room.Description, &room.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +49,7 @@ func (r *Repository) GetRoomWithDetails(ctx context.Context, roomID uuid.UUID) (
 	var roomDetails model.RoomWithDetails
 	query := `
 		SELECT 
-			r.id, r.movie_id, r.host_id, r.created_at,
+			r.id, r.movie_id, r.host_id, r.name, r.description, r.created_at,
 			m.id, m.title, m.description, m.original_file_path, m.transcoded_file_path,
 			m.hls_playlist_url, m.duration_seconds, m.file_size, m.mime_type, m.status,
 			m.uploaded_by, m.created_at, m.processing_started_at, m.processing_ended_at,
@@ -60,7 +61,7 @@ func (r *Repository) GetRoomWithDetails(ctx context.Context, roomID uuid.UUID) (
 
 	row := r.db.QueryRowContext(ctx, query, roomID)
 	err := row.Scan(
-		&roomDetails.ID, &roomDetails.MovieID, &roomDetails.HostID, &roomDetails.CreatedAt,
+		&roomDetails.ID, &roomDetails.MovieID, &roomDetails.HostID, &roomDetails.Name, &roomDetails.Description, &roomDetails.CreatedAt,
 		&roomDetails.Movie.ID, &roomDetails.Movie.Title, &roomDetails.Movie.Description,
 		&roomDetails.Movie.OriginalFilePath, &roomDetails.Movie.TranscodedFilePath,
 		&roomDetails.Movie.HLSPlaylistURL, &roomDetails.Movie.DurationSeconds, &roomDetails.Movie.FileSize,
@@ -308,6 +309,7 @@ func (r *Repository) CheckUserMovieAccess(ctx context.Context, userID uuid.UUID,
 		  AND r.movie_id = $2 
 		  AND ra.status = 'granted'`
 
+	logger.Infof("Checking movie access for user %s to movie %s", userID, movieID)
 	var count int
 	err := r.db.QueryRowContext(ctx, query, userID, movieID).Scan(&count)
 	if err != nil {
@@ -328,4 +330,124 @@ func (r *Repository) CheckRoomContainsMovie(ctx context.Context, roomID uuid.UUI
 	}
 
 	return count > 0, nil
+}
+
+// GetUserRooms retrieves all rooms where the user is host or has access
+func (r *Repository) GetUserRooms(ctx context.Context, userID uuid.UUID) ([]*model.RoomWithDetails, error) {
+	var rooms []*model.RoomWithDetails
+	query := `
+		SELECT DISTINCT
+			r.id, r.movie_id, r.host_id, r.name, r.description, r.created_at,
+			m.id, m.title, m.description, m.original_file_path, m.transcoded_file_path,
+			m.hls_playlist_url, m.duration_seconds, m.file_size, m.mime_type, m.status,
+			m.uploaded_by, m.created_at, m.processing_started_at, m.processing_ended_at,
+			u.id, u.email, u.role, u.created_at
+		FROM rooms r
+		JOIN movies m ON r.movie_id = m.id
+		JOIN users u ON r.host_id = u.id
+		LEFT JOIN room_access ra ON r.id = ra.room_id
+		WHERE r.host_id = $1 OR (ra.user_id = $1 AND ra.status = 'granted')
+		ORDER BY r.created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var roomDetails model.RoomWithDetails
+		err := rows.Scan(
+			&roomDetails.ID, &roomDetails.MovieID, &roomDetails.HostID, &roomDetails.Name, &roomDetails.Description, &roomDetails.CreatedAt,
+			&roomDetails.Movie.ID, &roomDetails.Movie.Title, &roomDetails.Movie.Description,
+			&roomDetails.Movie.OriginalFilePath, &roomDetails.Movie.TranscodedFilePath,
+			&roomDetails.Movie.HLSPlaylistURL, &roomDetails.Movie.DurationSeconds, &roomDetails.Movie.FileSize,
+			&roomDetails.Movie.MimeType, &roomDetails.Movie.Status, &roomDetails.Movie.UploadedBy, &roomDetails.Movie.CreatedAt,
+			&roomDetails.Movie.ProcessingStartedAt, &roomDetails.Movie.ProcessingEndedAt,
+			&roomDetails.Host.ID, &roomDetails.Host.Email, &roomDetails.Host.Role, &roomDetails.Host.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Get member count
+		memberCount, err := r.GetRoomMemberCount(ctx, roomDetails.ID)
+		if err != nil {
+			return nil, err
+		}
+		roomDetails.MemberCount = memberCount
+
+		rooms = append(rooms, &roomDetails)
+	}
+
+	return rooms, nil
+}
+
+// GetGuestRequestByID retrieves a guest request by ID
+func (r *Repository) GetGuestRequestByID(ctx context.Context, requestID uuid.UUID) (*model.GuestRequest, error) {
+	var request model.GuestRequest
+	query := `
+		SELECT 
+			gar.id, 
+			gar.room_id, 
+			gar.guest_name, 
+			gar.request_message, 
+			gar.status, 
+			gar.requested_at,
+			gs.session_token,
+			gs.expires_at
+		FROM guest_access_requests gar
+		LEFT JOIN guest_sessions gs ON gar.room_id = gs.room_id AND gar.guest_name = gs.guest_name
+		WHERE gar.id = $1`
+
+	row := r.db.QueryRowContext(ctx, query, requestID)
+	err := row.Scan(
+		&request.ID,
+		&request.RoomID,
+		&request.GuestName,
+		&request.Message,
+		&request.Status,
+		&request.CreatedAt,
+		&request.SessionToken,
+		&request.ExpiresAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &request, nil
+}
+
+// GetPendingRoomAccessRequests retrieves all pending room access requests for a room (for users, not guests)
+func (r *Repository) GetPendingRoomAccessRequests(ctx context.Context, roomID uuid.UUID) ([]model.UserRoomAccessRequest, error) {
+	var requests []model.UserRoomAccessRequest
+	query := `
+		SELECT 
+			ra.user_id, 
+			ra.room_id, 
+			'' as request_message,
+			ra.status, 
+			ra.granted_at as requested_at,
+			NULL as reviewed_by,
+			NULL as reviewed_at
+		FROM room_access ra
+		WHERE ra.room_id = $1 AND ra.status = 'requested'
+		ORDER BY ra.granted_at ASC`
+
+	rows, err := r.db.QueryContext(ctx, query, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var req model.UserRoomAccessRequest
+		err := rows.Scan(&req.UserID, &req.RoomID, &req.RequestMessage, &req.Status, &req.RequestedAt, &req.ReviewedBy, &req.ReviewedAt)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, req)
+	}
+
+	return requests, rows.Err()
 }

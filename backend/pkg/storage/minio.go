@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"watch-party/pkg/logger"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -15,15 +16,17 @@ import (
 
 // minioProvider implements the Provider interface using MinIO
 type minioProvider struct {
-	client   *minio.Client
-	bucket   string
-	endpoint string
-	useSSL   bool
+	client         *minio.Client
+	bucket         string
+	endpoint       string
+	publicClient   *minio.Client // Client configured with public endpoint for signing URLs
+	publicEndpoint string        // Public endpoint for generating URLs accessible from browser
+	useSSL         bool
 }
 
 // NewMinIOProvider creates a new MinIO storage provider
-func NewMinIOProvider(endpoint, accessKey, secretKey, bucket string, useSSL bool) (Provider, error) {
-	// create MinIO client
+func NewMinIOProvider(endpoint, accessKey, secretKey, bucket string, useSSL bool, publicEndpoint string) (Provider, error) {
+	// create MinIO client for internal operations
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure: useSSL,
@@ -31,12 +34,29 @@ func NewMinIOProvider(endpoint, accessKey, secretKey, bucket string, useSSL bool
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MinIO client: %w", err)
 	}
+	if client.IsOffline() {
+		return nil, fmt.Errorf("MinIO client is not online at %s", endpoint)
+	}
+
+	publicClient, err := minio.New(publicEndpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure: useSSL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create public MinIO client: %w", err)
+	}
+
+	if publicClient.IsOffline() {
+		return nil, fmt.Errorf("public MinIO client is not online at %s", publicEndpoint)
+	}
 
 	provider := &minioProvider{
-		client:   client,
-		bucket:   bucket,
-		endpoint: endpoint,
-		useSSL:   useSSL,
+		client:         client,
+		bucket:         bucket,
+		endpoint:       endpoint,
+		publicClient:   publicClient,
+		publicEndpoint: publicEndpoint,
+		useSSL:         useSSL,
 	}
 
 	// ensure bucket exists
@@ -103,8 +123,7 @@ func (m *minioProvider) GenerateSignedUploadURL(ctx context.Context, filename st
 		opts.ExpiresIn = time.Hour
 	}
 
-	// create presigned URL for PUT
-	presignedURL, err := m.client.PresignedPutObject(ctx, m.bucket, filename, opts.ExpiresIn)
+	presignedURL, err := m.publicClient.PresignedPutObject(ctx, m.bucket, filename, opts.ExpiresIn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
@@ -124,7 +143,7 @@ func (m *minioProvider) GenerateSignedUploadURL(ctx context.Context, filename st
 
 // GetSignedURL returns a presigned URL for accessing a file
 func (m *minioProvider) GetSignedURL(ctx context.Context, path string) (string, error) {
-	presignedURL, err := m.client.PresignedGetObject(ctx, m.bucket, path, time.Hour, nil)
+	presignedURL, err := m.publicClient.PresignedGetObject(ctx, m.bucket, path, time.Hour, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate signed URL: %w", err)
 	}
@@ -323,8 +342,8 @@ func (m *minioProvider) GenerateCDNSignedURL(ctx context.Context, path string, o
 		reqParams["response-content-type"] = []string{opts.ContentType}
 	}
 
-	// generate presigned URL
-	presignedURL, err := m.client.PresignedGetObject(ctx, m.bucket, path, expiration, reqParams)
+	// generate presigned URL using the public client for correct signature
+	presignedURL, err := m.publicClient.PresignedGetObject(ctx, m.bucket, path, expiration, reqParams)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
@@ -347,6 +366,7 @@ func (m *minioProvider) GenerateSignedURLs(ctx context.Context, paths []string, 
 		signedURL, err := m.GenerateCDNSignedURL(ctx, path, opts)
 		if err != nil {
 			// Continue with other URLs but log the error
+			logger.Errorf(err, "failed to generate signed URL. path: %s", path)
 			continue
 		}
 		result[path] = signedURL

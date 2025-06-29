@@ -42,7 +42,7 @@ type eventHandler struct {
 	movieRepo       Repository
 	storageProvider storage.Provider
 	videoProcessor  video.Processor
-	hlsBaseURL      string // Base URL for accessing HLS files
+	hlsBaseURL      string // Base URL for accessing HLS files (deprecated - not needed anymore)
 	tempDir         string // Directory for temporary processing files
 }
 
@@ -159,8 +159,9 @@ func (h *eventHandler) processVideoAsync(ctx context.Context, movie *model.Movie
 
 	defer func() {
 		// cleanup temporary files
-		// Note: in production, you might want to keep temp files for debugging
-		// os.RemoveAll(movieTempDir)
+		if err := os.RemoveAll(movieTempDir); err != nil {
+			logger.Error(err, fmt.Sprintf("failed to cleanup temp directory for movie %s", movieID))
+		}
 	}()
 
 	// download file to temporary location for processing
@@ -171,17 +172,13 @@ func (h *eventHandler) processVideoAsync(ctx context.Context, movie *model.Movie
 		return
 	}
 
-	// transcode to HLS
-	hlsOutput, err := h.videoProcessor.TranscodeToHLS(ctx, inputFile, outputDir, video.DefaultQualities)
+	// storage prefix for HLS files
+	storagePrefix := fmt.Sprintf("hls/%s", movieID.String())
+
+	// transcode to HLS (this now handles uploading to storage automatically)
+	hlsOutput, err := h.videoProcessor.TranscodeToHLS(ctx, inputFile, outputDir, storagePrefix, video.DefaultQualities)
 	if err != nil {
 		h.handleTranscodingError(movieID, fmt.Errorf("transcoding failed: %w", err))
-		return
-	}
-
-	// upload HLS files to storage
-	transcodedPath, hlsURL, err := h.uploadHLSFiles(ctx, movieID.String(), hlsOutput)
-	if err != nil {
-		h.handleTranscodingError(movieID, fmt.Errorf("failed to upload HLS files: %w", err))
 		return
 	}
 
@@ -192,7 +189,8 @@ func (h *eventHandler) processVideoAsync(ctx context.Context, movie *model.Movie
 		logger.Error(err, "failed to update processing end time")
 	}
 
-	err = h.movieRepo.UpdateHLSInfo(movieID, hlsURL, transcodedPath)
+	// update HLS info - the video processor already uploaded everything and returned URLs
+	err = h.movieRepo.UpdateHLSInfo(movieID, hlsOutput.MasterPlaylistURL, storagePrefix)
 	if err != nil {
 		logger.Error(err, "failed to update HLS info")
 		h.handleTranscodingError(movieID, fmt.Errorf("failed to update HLS info: %w", err))
@@ -205,8 +203,8 @@ func (h *eventHandler) processVideoAsync(ctx context.Context, movie *model.Movie
 		return
 	}
 
-	logger.Infof("video transcoding completed successfully for movie %s in %v",
-		movieID, endTime.Sub(startTime))
+	logger.Infof("video transcoding completed successfully for movie %s in %v, generated %d segments across %d qualities",
+		movieID, endTime.Sub(startTime), hlsOutput.TotalSegments, len(hlsOutput.QualityPlaylistURLs))
 }
 
 // downloadFileForProcessing downloads a file from storage to local temp directory
@@ -223,70 +221,6 @@ func (h *eventHandler) downloadFileForProcessing(ctx context.Context, storagePat
 	}
 
 	return nil
-}
-
-// uploadHLSFiles uploads all HLS files to storage and returns the transcoded path and public HLS URL
-func (h *eventHandler) uploadHLSFiles(ctx context.Context, movieID string, hlsOutput *video.HLSOutput) (string, string, error) {
-	// Create base path for transcoded files
-	basePath := fmt.Sprintf("transcoded/%s", movieID)
-
-	// Upload master playlist first
-	masterPath := fmt.Sprintf("%s/master.m3u8", basePath)
-	err := h.storageProvider.UploadFromPath(ctx, hlsOutput.MasterPlaylistPath, masterPath)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to upload master playlist: %w", err)
-	}
-
-	// Upload all quality-specific playlists and segments
-	for quality, playlistPath := range hlsOutput.QualityPlaylists {
-		// Upload quality playlist
-		qualityPlaylistPath := fmt.Sprintf("%s/%s.m3u8", basePath, quality)
-		err := h.storageProvider.UploadFromPath(ctx, playlistPath, qualityPlaylistPath)
-		if err != nil {
-			return "", "", fmt.Errorf("failed to upload %s playlist: %w", quality, err)
-		}
-
-		// Upload segments for this quality
-		// Segments are typically in the same directory as the playlist
-		segmentDir := filepath.Dir(playlistPath)
-		segmentPattern := fmt.Sprintf("%s_*.ts", quality)
-
-		// Find all segment files for this quality
-		segmentFiles, err := filepath.Glob(filepath.Join(segmentDir, segmentPattern))
-		if err != nil {
-			return "", "", fmt.Errorf("failed to find segment files for %s: %w", quality, err)
-		}
-
-		// Upload each segment file
-		for _, segmentFile := range segmentFiles {
-			segmentName := filepath.Base(segmentFile)
-			segmentStoragePath := fmt.Sprintf("%s/%s", basePath, segmentName)
-
-			err := h.storageProvider.UploadFromPath(ctx, segmentFile, segmentStoragePath)
-			if err != nil {
-				return "", "", fmt.Errorf("failed to upload segment %s: %w", segmentName, err)
-			}
-		}
-	}
-
-	// Get public URL for the master playlist
-	hlsURL, err := h.storageProvider.GetPublicURL(ctx, masterPath)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get public URL for master playlist: %w", err)
-	}
-
-	return basePath, hlsURL, nil
-}
-
-// Helper function to get content type from file path (keeping for compatibility)
-func getContentTypeFromPath(path string) string {
-	if strings.HasSuffix(path, ".m3u8") {
-		return "application/x-mpegURL"
-	}
-	if strings.HasSuffix(path, ".ts") {
-		return "video/MP2T"
-	}
-	return "application/octet-stream"
 }
 
 // handleTranscodingError handles transcoding errors
@@ -315,5 +249,5 @@ func isValidVideoExtension(ext string) bool {
 		".webm": true,
 		".m4v":  true,
 	}
-	return supportedFormats[ext]
+	return supportedFormats[strings.ToLower(ext)]
 }

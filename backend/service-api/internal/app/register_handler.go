@@ -18,12 +18,16 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 	handler.Use(gin.Recovery())
 
 	// cors middleware
-	corsConfig := cors.Config{
-		AllowOrigins:     a.config.CORS.AllowedOrigins,
-		AllowMethods:     a.config.CORS.AllowedMethods,
-		AllowHeaders:     a.config.CORS.AllowedHeaders,
-		AllowCredentials: true,
-	}
+	// corsConfig := cors.Config{
+	// 	AllowOrigins:     a.config.CORS.AllowedOrigins,
+	// 	AllowMethods:     a.config.CORS.AllowedMethods,
+	// 	AllowHeaders:     a.config.CORS.AllowedHeaders,
+	// 	AllowCredentials: true,
+	// }
+	corsConfig := cors.DefaultConfig()
+	corsConfig.AllowAllOrigins = true
+	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	corsConfig.AllowHeaders = []string{"Content-Type", "Authorization", "X-Requested-With", "X-Guest-Token"}
 	handler.Use(cors.New(corsConfig))
 
 	// create JWT middleware
@@ -77,6 +81,7 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 	{
 		// room management - authenticated users
 		userRoutes.POST("/rooms", a.roomController.CreateRoom)
+		userRoutes.GET("/rooms", a.roomController.GetRooms)
 		userRoutes.GET("/rooms/:id", a.roomController.GetRoom)
 		userRoutes.POST("/rooms/:id/invite", a.roomController.InviteUser)
 		userRoutes.POST("/rooms/join", a.roomController.JoinRoom)
@@ -86,14 +91,30 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 		// guest management - host only
 		userRoutes.GET("/rooms/:id/guest-requests", a.roomController.GetPendingGuestRequests)
 		userRoutes.POST("/rooms/:id/guest-requests/:requestId/approve", a.roomController.ApproveGuestRequest)
+
+		// room access management - for authenticated users
+		userRoutes.POST("/rooms/:id/room-access", a.roomController.RequestRoomAccess)
+		userRoutes.GET("/rooms/:id/room-access", a.roomController.GetPendingRoomAccessRequests)
+		userRoutes.POST("/rooms/:id/room-access/:userId/approve", a.roomController.ApproveRoomAccessRequest)
+		userRoutes.GET("/rooms/:id/room-access/status", a.roomController.CheckRoomAccessRequestStatus)
 	}
 
 	// public routes (no authentication required)
 	publicRoutes := api.Group("")
 	{
-		// guest access requests
+		// guest access requests (no auth needed to request access)
 		publicRoutes.POST("/rooms/:id/request-access", a.roomController.RequestGuestAccess)
 		publicRoutes.GET("/guest/validate/:token", a.roomController.ValidateGuestSession)
+		publicRoutes.GET("/guest-requests/:requestId/status", a.roomController.CheckGuestRequestStatus)
+	}
+
+	// guest protected routes (require guest token authentication)
+	guestAuth := middleware.GuestAuthForRoom(a.roomService)
+	guestRoutes := api.Group("/guest")
+	guestRoutes.Use(guestAuth)
+	{
+		// guest access to room info (requires guest token)
+		guestRoutes.GET("/rooms/:id", a.roomController.GetRoomForGuest)
 	}
 
 	// webhook routes (no authentication required for external services)
@@ -103,32 +124,15 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 		webhookRoutes.POST("/upload-complete", a.webhookController.HandleUploadComplete)
 	}
 
-	// streaming routes (protected by streaming-specific authentication)
+	// CDN-friendly video access routes (returns signed URLs)
 	streamingAuth := middleware.StreamingAuthMiddleware(jwtManager, a.roomService)
-
-	// cDN-friendly video access routes (returns signed URLs)
 	videoRoutes := api.Group("/videos")
-	videoRoutes.Use(authMiddleware) // use simple JWT auth instead of streaming auth
+	videoRoutes.Use(streamingAuth) // support both JWT and guest token authentication
 	{
 		videoRoutes.GET("/:movieId/hls", a.videoAccessController.GetHLSMasterPlaylistURL)
 		videoRoutes.POST("/:movieId/urls", a.videoAccessController.GetVideoFileURLs)
 		videoRoutes.GET("/:movieId/direct", a.videoAccessController.GetDirectVideoURL)
-	}
-
-	// legacy streaming routes (direct streaming - kept for backward compatibility)
-	streamRoutes := api.Group("/stream")
-	streamRoutes.Use(streamingAuth)
-	{
-		// cDN-friendly signed URL endpoints for HLS streaming
-		streamRoutes.GET("/:movieId/playlist.m3u8", a.streamingController.GetMasterPlaylistURL)
-		streamRoutes.GET("/:movieId/:quality/playlist.m3u8", a.streamingController.GetMediaPlaylistURL)
-		streamRoutes.GET("/:movieId/:quality/:segment", a.streamingController.GetVideoSegmentURL)
-
-		// Direct video signed URL with range support
-		streamRoutes.GET("/:movieId/video", a.streamingController.GetVideoURL)
-
-		// Bulk signed URL generation endpoint
-		streamRoutes.POST("/:movieId/urls", a.streamingController.GetMultipleURLs)
+		videoRoutes.POST("/:movieId/seek", a.videoAccessController.GetSegmentByTime)
 	}
 
 	return handler

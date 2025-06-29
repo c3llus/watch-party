@@ -86,8 +86,8 @@ func NewAppServer(cfg *config.Config) *appServer {
 	movieController := ctl.NewMovieController(movieSvc)
 	roomController := ctl.NewRoomController(roomSvc)
 	webhookController := ctl.NewWebhookController(uploadHandler)
-	streamingController := ctl.NewStreamingController(storageProvider, movieSvc)
-	videoAccessController := ctl.NewVideoAccessController(storageProvider, movieSvc)
+	streamingController := ctl.NewStreamingController(storageProvider, movieSvc, roomSvc)
+	videoAccessController := ctl.NewVideoAccessController(storageProvider, movieSvc, roomSvc)
 
 	// initialize middleware
 	middleware := mdw.NewMiddleware()

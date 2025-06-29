@@ -184,27 +184,29 @@ func (h *SyncHandler) GetRoomParticipants(c *gin.Context) {
 // in production, these would be middleware
 
 func (h *SyncHandler) getUserFromToken(c *gin.Context) (uuid.UUID, string, error) {
-	// Extract JWT token from Authorization header
+	var tokenString string
+
 	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		return uuid.Nil, "", fmt.Errorf("authorization header required")
+	if authHeader != "" {
+		bearerToken := strings.Split(authHeader, " ")
+		if len(bearerToken) == 2 && bearerToken[0] == "Bearer" {
+			tokenString = bearerToken[1]
+		}
 	}
 
-	// Extract Bearer token
-	bearerToken := strings.Split(authHeader, " ")
-	if len(bearerToken) != 2 || bearerToken[0] != "Bearer" {
-		return uuid.Nil, "", fmt.Errorf("invalid authorization header format")
+	if tokenString == "" {
+		tokenString = c.Query("token")
 	}
 
-	tokenString := bearerToken[1]
+	if tokenString == "" {
+		return uuid.Nil, "", fmt.Errorf("authorization token required")
+	}
 
-	// Use the injected JWT manager to validate the token
 	claims, err := h.jwtManager.ValidateToken(tokenString)
 	if err != nil {
 		return uuid.Nil, "", fmt.Errorf("invalid token: %w", err)
 	}
 
-	// Extract username from email (simple approach) or use a separate username field
 	username := strings.Split(claims.Email, "@")[0]
 	if username == "" {
 		username = "User"

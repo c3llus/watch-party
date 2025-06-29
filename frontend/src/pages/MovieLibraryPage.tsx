@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { movieService, type Movie } from '../services/movieService'
 
 export default function MovieLibraryPage() {
+  const navigate = useNavigate()
   const [movies, setMovies] = useState<Movie[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -201,8 +202,7 @@ export default function MovieLibraryPage() {
                     {movie.status === 'available' && (
                       <button
                         onClick={() => {
-                          // TODO: integrate with room creation
-                          alert('Room creation integration coming soon!')
+                          navigate(`/admin/rooms/create?movieId=${movie.id}`)
                         }}
                         style={{
                           padding: '0.5rem 1rem',

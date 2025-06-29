@@ -26,13 +26,15 @@ erDiagram
         string id PK "UUID, PK"
         string movie_id FK "FK to movies"
         string host_id FK "FK to users"
+        string name "Room display name"
+        text description "Room description"
         datetime created_at
     }
     room_access {
         string user_id PK, FK "Composite PK, FK to users"
         string room_id PK, FK "Composite PK, FK to rooms"
         string access_type "granted | guest"
-        string status "invited | granted"
+        string status "granted | pending"
         datetime granted_at
     }
     guest_access_requests {
@@ -78,7 +80,7 @@ erDiagram
         string id PK "UUID, PK"
         string session_id FK "FK to room_sessions"
         string user_id FK "FK to users"
-        string event_type "join|leave|play|pause|seek|rate_change"
+        string event_type "join|leave|play|pause|seek"
         jsonb event_data "Flexible event data"
         real video_time "Video position at event"
         datetime timestamp

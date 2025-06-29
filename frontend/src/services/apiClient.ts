@@ -23,6 +23,24 @@ class ApiClient {
     return token ? { Authorization: `Bearer ${token}` } : {}
   }
 
+  // shared response handler
+  private async handleResponse<T>(response: Response): Promise<T> {
+    // check if response is JSON
+    const contentType = response.headers.get('content-type')
+    if (!contentType || !contentType.includes('application/json')) {
+      const text = await response.text()
+      throw new Error(`server returned non-JSON response: ${text.substring(0, 200)}`)
+    }
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.error || `request failed with status ${response.status}`)
+    }
+
+    return data as T
+  }
+
   async post<T>(endpoint: string, body: unknown): Promise<T> {
     await this.initializeConfig()
     
@@ -35,13 +53,30 @@ class ApiClient {
       body: JSON.stringify(body),
     })
 
-    const data = await response.json()
+    return this.handleResponse<T>(response)
+  }
 
-    if (!response.ok) {
-      throw new Error(data.error || `request failed with status ${response.status}`)
+  // post method that accepts guest token
+  async postWithGuestToken<T>(endpoint: string, body: unknown, guestToken?: string): Promise<T> {
+    await this.initializeConfig()
+    
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
     }
+    
+    if (guestToken) {
+      headers['X-Guest-Token'] = guestToken
+    } else {
+      Object.assign(headers, this.getAuthHeaders())
+    }
+    
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    })
 
-    return data as T
+    return this.handleResponse<T>(response)
   }
 
   async get<T>(endpoint: string): Promise<T> {
@@ -53,13 +88,21 @@ class ApiClient {
       },
     })
 
-    const data = await response.json()
+    return this.handleResponse<T>(response)
+  }
 
-    if (!response.ok) {
-      throw new Error(data.error || `request failed with status ${response.status}`)
-    }
+  // public get method without auth headers for guest requests
+  async publicGet<T>(endpoint: string): Promise<T> {
+    await this.initializeConfig()
+    
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
 
-    return data as T
+    return this.handleResponse<T>(response)
   }
 
   async put<T>(endpoint: string, body: unknown): Promise<T> {
@@ -74,13 +117,7 @@ class ApiClient {
       body: JSON.stringify(body),
     })
 
-    const data = await response.json()
-
-    if (!response.ok) {
-      throw new Error(data.error || `request failed with status ${response.status}`)
-    }
-
-    return data as T
+    return this.handleResponse<T>(response)
   }
 
   async delete<T>(endpoint: string): Promise<T> {
@@ -93,13 +130,7 @@ class ApiClient {
       },
     })
 
-    const data = await response.json()
-
-    if (!response.ok) {
-      throw new Error(data.error || `request failed with status ${response.status}`)
-    }
-
-    return data as T
+    return this.handleResponse<T>(response)
   }
 }
 

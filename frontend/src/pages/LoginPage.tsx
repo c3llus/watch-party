@@ -21,8 +21,6 @@ export default function LoginPage() {
       localStorage.setItem('refresh_token', result.refresh_token)
       localStorage.setItem('user', JSON.stringify(result.user))
       
-      console.log('user logged in successfully:', result.user.email)
-      
       // redirect based on role detection
       if (result.user.role === 'admin') {
         window.location.href = '/admin'

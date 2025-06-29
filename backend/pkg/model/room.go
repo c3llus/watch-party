@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
@@ -8,10 +9,12 @@ import (
 
 // Room represents a watch party room
 type Room struct {
-	ID        uuid.UUID `json:"id" db:"id"`
-	MovieID   uuid.UUID `json:"movie_id" db:"movie_id"`
-	HostID    uuid.UUID `json:"host_id" db:"host_id"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	ID          uuid.UUID `json:"id" db:"id"`
+	MovieID     uuid.UUID `json:"movie_id" db:"movie_id"`
+	HostID      uuid.UUID `json:"host_id" db:"host_id"`
+	Name        string    `json:"name" db:"name"`
+	Description string    `json:"description" db:"description"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }
 
 // RoomAccess represents user access to a room
@@ -19,7 +22,7 @@ type RoomAccess struct {
 	UserID     uuid.UUID `json:"user_id" db:"user_id"`
 	RoomID     uuid.UUID `json:"room_id" db:"room_id"`
 	AccessType string    `json:"access_type" db:"access_type"` // "granted" or "guest"
-	Status     string    `json:"status" db:"status"`           // "granted", "invited", "requested", "denied"
+	Status     string    `json:"status" db:"status"`           // "granted", "requested", "denied"
 	GrantedAt  time.Time `json:"granted_at" db:"granted_at"`
 }
 
@@ -32,14 +35,22 @@ const (
 // RoomAccessStatus constants
 const (
 	StatusGranted   = "granted"   // User has full access
-	StatusInvited   = "invited"   // User is invited and can join
-	StatusRequested = "requested" // Guest requested access
+	StatusRequested = "requested" // User requested access
 	StatusDenied    = "denied"    // Access was denied
+)
+
+// GuestAccessStatus constants (for guest requests specifically)
+const (
+	GuestStatusPending  = "pending"  // Guest request is pending review
+	GuestStatusApproved = "approved" // Guest request was approved
+	GuestStatusDenied   = "denied"   // Guest request was denied
 )
 
 // CreateRoomRequest represents the request to create a new room
 type CreateRoomRequest struct {
-	MovieID uuid.UUID `json:"movie_id" binding:"required"`
+	MovieID     uuid.UUID `json:"movie_id" binding:"required"`
+	Name        string    `json:"name" binding:"required"`
+	Description string    `json:"description"`
 }
 
 // CreateRoomResponse represents the response after creating a room
@@ -149,12 +160,20 @@ type GuestSession struct {
 	CreatedAt    time.Time `json:"created_at" db:"created_at"`
 }
 
-// GuestAccessRequest status constants
-const (
-	GuestStatusPending  = "pending"
-	GuestStatusApproved = "approved"
-	GuestStatusDenied   = "denied"
-)
+// RoomGuestInfo represents basic room information for guests (public, no auth required)
+type RoomGuestInfo struct {
+	ID          uuid.UUID      `json:"id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Movie       MovieGuestInfo `json:"movie"`
+}
+
+// MovieGuestInfo represents basic movie information for guests
+type MovieGuestInfo struct {
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+}
 
 // Guest request/response models
 type GuestAccessRequestRequest struct {
@@ -179,4 +198,50 @@ type ApproveGuestResponse struct {
 	SessionToken string    `json:"session_token,omitempty"`
 	ExpiresAt    time.Time `json:"expires_at,omitempty"`
 	Message      string    `json:"message"`
+}
+
+// UserRoomAccessRequest represents a logged-in user's request to join a room
+type UserRoomAccessRequest struct {
+	UserID         uuid.UUID  `json:"user_id" db:"user_id"`
+	RoomID         uuid.UUID  `json:"room_id" db:"room_id"`
+	RequestMessage string     `json:"request_message" db:"request_message"`
+	Status         string     `json:"status" db:"status"` // "requested", "approved", "denied"
+	RequestedAt    time.Time  `json:"requested_at" db:"requested_at"`
+	ReviewedBy     *uuid.UUID `json:"reviewed_by" db:"reviewed_by"`
+	ReviewedAt     *time.Time `json:"reviewed_at" db:"reviewed_at"`
+}
+
+// UserRoomAccessRequestRequest represents the request to join a room as a logged-in user
+type UserRoomAccessRequestRequest struct {
+	RequestMessage string `json:"request_message"`
+}
+
+// UserRoomAccessRequestResponse represents the response after requesting room access
+type UserRoomAccessRequestResponse struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// ApproveUserAccessRequest represents the request to approve/deny user room access
+type ApproveUserAccessRequest struct {
+	Approved bool   `json:"approved"`
+	Message  string `json:"message"`
+}
+
+// ApproveUserAccessResponse represents the response after approving/denying user access
+type ApproveUserAccessResponse struct {
+	UserID  uuid.UUID `json:"user_id"`
+	Status  string    `json:"status"`
+	Message string    `json:"message"`
+}
+
+type GuestRequest struct {
+	ID           uuid.UUID      `json:"id" db:"id"`
+	RoomID       uuid.UUID      `json:"room_id" db:"room_id"`
+	GuestName    string         `json:"guest_name" db:"guest_name"`
+	Message      sql.NullString `json:"message" db:"message"`
+	Status       string         `json:"status" db:"status"`
+	CreatedAt    time.Time      `json:"created_at" db:"created_at"`
+	SessionToken sql.NullString `json:"session_token" db:"session_token"`
+	ExpiresAt    sql.NullTime   `json:"expires_at" db:"expires_at"`
 }

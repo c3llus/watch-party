@@ -100,12 +100,7 @@ export function useMovieUpload() {
 
       // step 3: notify backend of upload completion (triggers transcoding)
       try {
-        await movieService.notifyUploadComplete(
-          movieId,
-          uploadResponse.file_path,
-          file.size,
-          file.type
-        )
+        await movieService.notifyUploadComplete(movieId, uploadResponse.file_path)
       } catch (error) {
         console.error('failed to notify backend of upload completion:', error)
         updateUpload(movieId, {

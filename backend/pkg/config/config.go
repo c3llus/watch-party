@@ -32,7 +32,8 @@ type DatabaseConfig struct {
 }
 
 type LogConfig struct {
-	Level string `mapstructure:"log_level"`
+	Level  string `mapstructure:"log_level"`
+	Format string `mapstructure:"log_format"` // "console" or "json"
 }
 
 type StorageConfig struct {

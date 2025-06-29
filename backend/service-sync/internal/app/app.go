@@ -65,12 +65,16 @@ func (s *syncServer) Serve() {
 	router.Use(gin.Logger(), gin.Recovery())
 
 	// cors middleware
-	corsConfig := cors.Config{
-		AllowOrigins:     s.config.CORS.AllowedOrigins,
-		AllowMethods:     s.config.CORS.AllowedMethods,
-		AllowHeaders:     s.config.CORS.AllowedHeaders,
-		AllowCredentials: true,
-	}
+	// corsConfig := cors.Config{
+	// 	AllowOrigins:     s.config.CORS.AllowedOrigins,
+	// 	AllowMethods:     s.config.CORS.AllowedMethods,
+	// 	AllowHeaders:     s.config.CORS.AllowedHeaders,
+	// 	AllowCredentials: true,
+	// }
+	corsConfig := cors.DefaultConfig()
+	corsConfig.AllowAllOrigins = true
+	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	corsConfig.AllowHeaders = []string{"Content-Type", "Authorization", "X-Requested-With"}
 	router.Use(cors.New(corsConfig))
 
 	// setup routes

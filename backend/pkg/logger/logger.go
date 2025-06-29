@@ -19,7 +19,7 @@ type logger struct {
 type options struct {
 }
 
-// Log returns the logger instance
+// InitLogger initializes the logger with configuration
 func InitLogger(cfg *config.Config) {
 	logLvl := getLogLevel(cfg.Log.Level)
 
@@ -27,7 +27,12 @@ func InitLogger(cfg *config.Config) {
 
 	zl.SetGlobalLevel(logLvl)
 
-	engine := newLogger(opts)
+	var engine zl.Logger
+	if cfg.Log.Format == "json" {
+		engine = newJSONLogger(opts)
+	} else {
+		engine = newLogger(opts)
+	}
 
 	log = &logger{
 		engine: &engine,
@@ -54,8 +59,13 @@ func newLogger(opts options) zl.Logger {
 	var wr []io.Writer
 	zll.Logger = zll.Output(zl.Logger{})
 
-	wr = append(wr, zl.ConsoleWriter{Out: os.Stderr})
+	wr = append(wr, zl.ConsoleWriter{Out: os.Stdout})
 	mw := io.MultiWriter(wr...)
 
 	return zl.New(mw).With().Timestamp().Logger()
+}
+
+// newJSONLogger creates a logger that outputs JSON format (better for cloud environments)
+func newJSONLogger(opts options) zl.Logger {
+	return zl.New(os.Stdout).With().Timestamp().Logger()
 }
