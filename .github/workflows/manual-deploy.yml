@@ -117,7 +117,8 @@ jobs:
             --max-instances 10 \
             --concurrency 80 \
             --timeout 3600 \
-            --set-env-vars="GCP_PROJECT_ID=${{ env.GCP_PROJECT_ID }}" \
+            --service-account cloud-run-services@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+            --set-env-vars="ENVIRONMENT=production" \
             --quiet
 
       # Install Ansible

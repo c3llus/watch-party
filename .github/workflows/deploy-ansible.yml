@@ -109,7 +109,9 @@ jobs:
             --region ${{ env.GCP_REGION }} \
             --platform managed \
             --allow-unauthenticated \
-            --set-env-vars="DEPLOYMENT_SHA=${{ needs.build_and_push_images.outputs.short_sha }}"
+            --service-account cloud-run-services@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+            --set-env-vars="ENVIRONMENT=production" \
+            --quiet
 
   # Job 3: Deploy WebSocket Service with Ansible Blue-Green
   deploy_websocket_ansible:

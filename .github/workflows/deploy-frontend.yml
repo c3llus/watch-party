@@ -1,0 +1,52 @@
+name: Deploy Frontend to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  deploy_frontend:
+    name: Build and Deploy Frontend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ./frontend
+
+      - name: Build frontend
+        env:
+          VITE_API_URL: https://service-api-909156263178.asia-southeast1.run.app
+          VITE_WS_URL: ws://35.240.143.13:8080
+          NODE_ENV: production
+        run: npm run build
+        working-directory: ./frontend
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: watch-party-frontend
+          directory: ./frontend/dist
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
