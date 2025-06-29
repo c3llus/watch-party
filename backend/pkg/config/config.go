@@ -1,11 +1,57 @@
 package config
 
 import (
+	"context"
+	"io"
 	"log"
+	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
+
+const (
+	EnvProduction            = "production"
+	EnvStaging               = "staging"
+	EnvDevelopment           = "development"
+	SecretNameConfig         = "watch-party-config"
+	EnvVarEnvironment        = "ENVIRONMENT"
+	EnvVarGCPProjectID       = "GCP_PROJECT_ID"
+	EnvVarGoogleCloudProject = "GOOGLE_CLOUD_PROJECT"
+	GCEMetadataEndpoint      = "http://metadata.google.internal/computeMetadata/v1/"
+)
+
+// isCloudEnvironment detects if we're running in a cloud environment that should use Secret Manager
+func isCloudEnvironment() bool {
+	env := os.Getenv(EnvVarEnvironment)
+	if env == EnvProduction || env == EnvStaging {
+		return true
+	}
+
+	if os.Getenv(EnvVarGCPProjectID) != "" || os.Getenv(EnvVarGoogleCloudProject) != "" {
+		return true
+	}
+
+	return isRunningOnGCE()
+}
+
+// getGCPProjectID gets the project ID from environment or GCE metadata
+func getGCPProjectID() string {
+	if projectID := os.Getenv(EnvVarGCPProjectID); projectID != "" {
+		return projectID
+	}
+	if projectID := os.Getenv(EnvVarGoogleCloudProject); projectID != "" {
+		return projectID
+	}
+
+	if projectID := getProjectIDFromMetadata(); projectID != "" {
+		return projectID
+	}
+
+	return ""
+}
 
 type Config struct {
 	Port      string         `json:"port"`
@@ -100,7 +146,7 @@ type CORSConfig struct {
 }
 
 func init() {
-	if !isGCP {
+	if !isCloudEnvironment() {
 		err := godotenv.Load()
 		if err != nil {
 			log.Println("Warning: Could not find or load .env file.")
@@ -109,6 +155,37 @@ func init() {
 }
 
 func NewConfig() *Config {
+	if isCloudEnvironment() {
+		ctx := context.Background()
+		projectID := getGCPProjectID()
+
+		if projectID != "" {
+			config, err := LoadFromSecretManager(ctx, projectID, SecretNameConfig)
+			if err == nil {
+				environment := os.Getenv(EnvVarEnvironment)
+				if environment == "" {
+					environment = "cloud"
+				}
+				log.Printf("Configuration loaded from Google Secret Manager for %s environment", environment)
+				return config
+			}
+			environment := os.Getenv(EnvVarEnvironment)
+			if environment == "" {
+				environment = "cloud"
+			}
+			log.Printf("Failed to load from Secret Manager in %s environment, falling back to environment variables: %v", environment, err)
+		}
+	}
+
+	environment := os.Getenv(EnvVarEnvironment)
+	if environment == "" {
+		environment = "development"
+	}
+	log.Printf("Loading configuration from environment variables for %s environment", environment)
+	return loadFromEnvironment()
+}
+
+func loadFromEnvironment() *Config {
 	return &Config{
 		Port:      getOptionalSecret("PORT", "8080"),
 		JWTSecret: getRequiredSecret("JWT_SECRET"),
@@ -177,4 +254,54 @@ func NewConfig() *Config {
 			AllowedHeaders: parseOptionalStringSlice("CORS_ALLOWED_HEADERS", "Content-Type,Authorization"),
 		},
 	}
+}
+
+// isRunningOnGCE checks if the application is running on Google Compute Engine (GCE).
+func isRunningOnGCE() bool {
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest("GET", GCEMetadataEndpoint+"instance/hostname", nil)
+	if err != nil {
+		return false
+	}
+
+	// required header for GCE metadata server
+	req.Header.Add("Metadata-Flavor", "Google")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	// GCE metadata server returns 200 OK for valid requests
+	return resp.StatusCode == http.StatusOK
+}
+
+// getProjectIDFromMetadata retrieves the Google Cloud project ID from the GCE metadata server.
+func getProjectIDFromMetadata() string {
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest("GET", GCEMetadataEndpoint+"project/project-id", nil)
+	if err != nil {
+		return ""
+	}
+
+	// required header for GCE metadata server
+	req.Header.Add("Metadata-Flavor", "Google")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	projectID, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(projectID))
 }

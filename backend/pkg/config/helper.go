@@ -9,15 +9,8 @@ import (
 	"time"
 )
 
-var isGCP = os.Getenv("GOOGLE_CLOUD_PROJECT") != ""
-
-// getSecret retrieves the value of a secret from Google Cloud Secret Manager or environment variables.
+// getSecret retrieves the value of a secret from environment variables.
 func getSecret(key string) (string, error) {
-	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	if projectID != "" {
-		return accessSecretVersion(fmt.Sprintf("projects/%s/secrets/%s/versions/latest", projectID, key))
-	}
-
 	value := os.Getenv(key)
 	if value == "" {
 		return "", fmt.Errorf("environment variable %q not set", key)
