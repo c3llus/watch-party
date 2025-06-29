@@ -1,0 +1,167 @@
+---
+- name: Blue-Green Deployment for WebSocket Sync Service
+  hosts: websocket_servers
+  become: yes
+  vars:
+    docker_image: "{{ docker_registry }}/{{ project_id }}/app-services/service-sync:{{ image_tag }}"
+    deployment_timestamp: "{{ ansible_date_time.epoch }}"
+    
+  pre_tasks:
+    - name: Authenticate with Google Cloud
+      shell: |
+        gcloud auth activate-service-account --key-file=/opt/watch-party/config/service-account.json
+        gcloud auth configure-docker {{ docker_registry }}
+      environment:
+        GOOGLE_APPLICATION_CREDENTIALS: /opt/watch-party/config/service-account.json
+
+    - name: Get secrets from Secret Manager
+      shell: |
+        gcloud secrets versions access latest --secret="{{ item.secret }}" --project="{{ project_id }}"
+      register: secrets_result
+      loop:
+        - { secret: "{{ db_password_secret }}", var: "db_password" }
+        - { secret: "{{ jwt_secret_secret }}", var: "jwt_secret" }
+      no_log: true
+
+    - name: Set secret facts
+      set_fact:
+        db_password: "{{ secrets_result.results[0].stdout }}"
+        jwt_secret: "{{ secrets_result.results[1].stdout }}"
+      no_log: true
+
+  tasks:
+    - name: Determine current active slot
+      uri:
+        url: "http://localhost/api/deployment/status"
+        method: GET
+        return_content: yes
+      register: current_deployment
+      failed_when: false
+
+    - name: Set deployment slots
+      set_fact:
+        active_slot: "{{ current_deployment.json.active_slot | default('blue') }}"
+        inactive_slot: "{{ 'green' if (current_deployment.json.active_slot | default('blue')) == 'blue' else 'blue' }}"
+
+    - name: Set slot configuration
+      set_fact:
+        active_config: "{{ deployment_slots | selectattr('name', 'equalto', active_slot) | first }}"
+        inactive_config: "{{ deployment_slots | selectattr('name', 'equalto', inactive_slot) | first }}"
+
+    - name: Pull new Docker image
+      docker_image:
+        name: "{{ docker_image }}"
+        source: pull
+        force_source: yes
+
+    - name: Stop inactive slot container (if running)
+      docker_container:
+        name: "watch-party-sync-{{ inactive_slot }}"
+        state: stopped
+      ignore_errors: yes
+
+    - name: Remove inactive slot container
+      docker_container:
+        name: "watch-party-sync-{{ inactive_slot }}"
+        state: absent
+      ignore_errors: yes
+
+    - name: Start new container in inactive slot
+      docker_container:
+        name: "watch-party-sync-{{ inactive_slot }}"
+        image: "{{ docker_image }}"
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "{{ inactive_config.port }}:8080"
+        env:
+          REDIS_HOST: "{{ redis_host }}"
+          REDIS_PORT: "{{ redis_port }}"
+          DB_HOST: "{{ db_host }}"
+          DB_NAME: "{{ db_name }}"
+          DB_USERNAME: "{{ db_username }}"
+          DB_PASSWORD: "{{ db_password }}"
+          JWT_SECRET: "{{ jwt_secret }}"
+          PORT: "8080"
+          DEPLOYMENT_SLOT: "{{ inactive_slot }}"
+          DEPLOYMENT_TIMESTAMP: "{{ deployment_timestamp }}"
+        labels:
+          deployment_slot: "{{ inactive_slot }}"
+          deployment_timestamp: "{{ deployment_timestamp }}"
+
+    - name: Wait for inactive slot to be healthy
+      uri:
+        url: "http://localhost:{{ inactive_config.port }}/health"
+        method: GET
+        status_code: 200
+      register: health_check
+      until: health_check.status == 200
+      retries: 30
+      delay: 10
+
+    - name: Run smoke tests on inactive slot
+      uri:
+        url: "http://localhost:{{ inactive_config.port }}/api/health/detailed"
+        method: GET
+        return_content: yes
+      register: smoke_test
+      failed_when: smoke_test.json.status != "healthy"
+
+    - name: Switch traffic to new slot (Blue-Green cutover)
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/sites-available/watch-party
+        backup: yes
+      vars:
+        primary_slot: "{{ inactive_slot }}"
+        primary_port: "{{ inactive_config.port }}"
+        secondary_slot: "{{ active_slot }}"
+        secondary_port: "{{ active_config.port }}"
+      notify: reload nginx
+
+    - name: Reload nginx to switch traffic
+      systemd:
+        name: nginx
+        state: reloaded
+
+    - name: Wait for traffic switch verification
+      uri:
+        url: "http://localhost/api/deployment/status"
+        method: GET
+        return_content: yes
+      register: switch_verification
+      until: switch_verification.json.active_slot == inactive_slot
+      retries: 10
+      delay: 5
+
+    - name: Stop old container (previous active slot)
+      docker_container:
+        name: "watch-party-sync-{{ active_slot }}"
+        state: stopped
+      delay: 30
+
+    - name: Update deployment status
+      copy:
+        content: |
+          {
+            "active_slot": "{{ inactive_slot }}",
+            "deployment_timestamp": "{{ deployment_timestamp }}",
+            "image": "{{ docker_image }}",
+            "previous_slot": "{{ active_slot }}"
+          }
+        dest: /opt/watch-party/config/deployment-status.json
+
+  handlers:
+    - name: reload nginx
+      systemd:
+        name: nginx
+        state: reloaded
+
+  post_tasks:
+    - name: Clean up old Docker images (keep last 3)
+      shell: |
+        docker images --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | \
+        grep "{{ docker_registry }}/{{ project_id }}/app-services/service-sync" | \
+        tail -n +4 | \
+        awk '{print $1}' | \
+        xargs -r docker rmi || true

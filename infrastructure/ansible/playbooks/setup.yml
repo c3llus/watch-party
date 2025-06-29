@@ -1,0 +1,81 @@
+---
+- name: Setup WebSocket Sync Service with Blue-Green Deployment
+  hosts: websocket_servers
+  become: yes
+  vars:
+    docker_image: "{{ docker_registry }}/{{ project_id }}/app-services/service-sync:{{ image_tag | default('latest') }}"
+    
+  tasks:
+    - name: Update system packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+      when: ansible_os_family == "Debian"
+
+    - name: Install required packages (everything the startup script was doing)
+      apt:
+        name:
+          - docker.io
+          - docker-compose
+          - nginx
+          - jq
+          - curl
+          - python3-pip
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ansible user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: Create application directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: docker
+        mode: '0755'
+      loop:
+        - /opt/watch-party
+        - /opt/watch-party/config
+        - /opt/watch-party/logs
+        - /etc/nginx/sites-available
+        - /etc/nginx/sites-enabled
+
+    - name: Configure nginx for blue-green deployment
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/sites-available/watch-party
+        backup: yes
+      notify: reload nginx
+
+    - name: Enable nginx site
+      file:
+        src: /etc/nginx/sites-available/watch-party
+        dest: /etc/nginx/sites-enabled/watch-party
+        state: link
+      notify: reload nginx
+
+    - name: Remove default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: reload nginx
+
+  handlers:
+    - name: reload nginx
+      systemd:
+        name: nginx
+        state: reloaded

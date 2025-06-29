@@ -1,0 +1,24 @@
+---
+all:
+  children:
+    websocket_servers:
+      hosts:
+        service-sync-shc5:
+          ansible_host: 34.87.43.122
+          ansible_user: marcellus
+      vars:
+        environment: production
+        docker_registry: asia-southeast1-docker.pkg.dev
+        project_id: "{{ gcp_project_id }}"
+        
+        app_name: watch-party-sync
+        app_port: 8080
+        health_check_path: /health
+        
+        deployment_slots:
+          - name: blue
+            port: 8080
+            weight: 100
+          - name: green
+            port: 8081
+            weight: 0

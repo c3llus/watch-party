@@ -1,0 +1,119 @@
+---
+- name: Verify Blue-Green Deployment Health
+  hosts: websocket_servers
+  become: yes
+  vars:
+    health_check_retries: 10
+    health_check_delay: 5
+    
+  tasks:
+    - name: Check deployment status file exists
+      stat:
+        path: /opt/watch-party/config/deployment-status.json
+      register: deployment_status_file
+
+    - name: Read current deployment status
+      slurp:
+        src: /opt/watch-party/config/deployment-status.json
+      register: deployment_status
+      when: deployment_status_file.stat.exists
+
+    - name: Parse deployment status
+      set_fact:
+        current_deployment: "{{ deployment_status.content | b64decode | from_json }}"
+      when: deployment_status_file.stat.exists
+
+    - name: Display current active slot
+      debug:
+        msg: "Current active slot: {{ current_deployment.active_slot | default('unknown') }}"
+      when: deployment_status_file.stat.exists
+
+    - name: Check if Nginx is running
+      systemd:
+        name: nginx
+        state: started
+      register: nginx_status
+
+    - name: Test Nginx health endpoint
+      uri:
+        url: "http://localhost/health"
+        method: GET
+        timeout: 10
+      register: nginx_health
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+      until: nginx_health.status == 200
+
+    - name: Check if active container is running
+      shell: |
+        if [ -f /opt/watch-party/config/deployment-status.json ]; then
+          ACTIVE_SLOT=$(jq -r '.active_slot' /opt/watch-party/config/deployment-status.json)
+          if [ "$ACTIVE_SLOT" = "blue" ]; then
+            docker ps --filter "name=watch-party-sync-blue" --filter "status=running" --format "{{.Names}}"
+          else
+            docker ps --filter "name=watch-party-sync-green" --filter "status=running" --format "{{.Names}}"
+          fi
+        else
+          echo "No deployment status file found"
+          exit 1
+        fi
+      register: active_container
+      changed_when: false
+
+    - name: Verify active container is responding
+      uri:
+        url: "http://localhost:{{ '8080' if current_deployment.active_slot == 'blue' else '8081' }}/health"
+        method: GET
+        timeout: 10
+      register: container_health
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+      until: container_health.status == 200
+      when: deployment_status_file.stat.exists
+
+    - name: Verify no inactive containers are running
+      shell: |
+        if [ -f /opt/watch-party/config/deployment-status.json ]; then
+          ACTIVE_SLOT=$(jq -r '.active_slot' /opt/watch-party/config/deployment-status.json)
+          if [ "$ACTIVE_SLOT" = "blue" ]; then
+            ! docker ps --filter "name=watch-party-sync-green" --filter "status=running" --format "{{.Names}}" | grep -q "watch-party-sync-green"
+          else
+            ! docker ps --filter "name=watch-party-sync-blue" --filter "status=running" --format "{{.Names}}" | grep -q "watch-party-sync-blue"
+          fi
+        else
+          echo "No deployment status to verify"
+          exit 1
+        fi
+      register: inactive_container_check
+      changed_when: false
+
+    - name: Check Docker logs for errors
+      shell: |
+        if [ -f /opt/watch-party/config/deployment-status.json ]; then
+          ACTIVE_SLOT=$(jq -r '.active_slot' /opt/watch-party/config/deployment-status.json)
+          CONTAINER_NAME="watch-party-sync-${ACTIVE_SLOT}"
+          
+          docker logs --tail 20 "$CONTAINER_NAME" 2>&1 | grep -i error || true
+        fi
+      register: container_logs
+      changed_when: false
+
+    - name: Report verification results
+      debug:
+        msg: |
+          Blue-Green Deployment Verification Results:
+          - Nginx Status: {{ 'Running' if nginx_status.status.ActiveState == 'active' else 'Failed' }}
+          - Health Endpoint: {{ 'OK' if nginx_health.status == 200 else 'Failed' }}
+          - Active Container: {{ active_container.stdout | default('None') }}
+          - Container Health: {{ 'OK' if container_health.status == 200 else 'Failed' }}
+          - Inactive Containers: {{ 'Properly stopped' if inactive_container_check.rc == 0 else 'Still running' }}
+          - Recent Errors: {{ 'None' if container_logs.stdout == '' else container_logs.stdout }}
+
+    - name: Fail if any health checks failed
+      fail:
+        msg: "Deployment verification failed - see results above"
+      when: >
+        nginx_health.status != 200 or
+        container_health.status != 200 or
+        inactive_container_check.rc != 0 or
+        active_container.stdout == ""

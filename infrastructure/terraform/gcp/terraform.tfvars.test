@@ -1,0 +1,7 @@
+# GCP Configuration
+gcp_project_id = "nafas-id-marcellus"
+gcp_region     = "asia-southeast1"
+
+# api_image_url  = "nginx:latest"
+# sync_image_url = "nginx:latest"
+
