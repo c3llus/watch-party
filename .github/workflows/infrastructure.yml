@@ -1,0 +1,171 @@
+name: Infrastructure Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      terraform_action:
+        description: 'Terraform action to perform'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+        - plan
+        - apply
+        - destroy
+      auto_approve:
+        description: 'Auto-approve Terraform apply/destroy (use with caution)'
+        required: false
+        default: false
+        type: boolean
+
+  push:
+    paths:
+      - 'infrastructure/terraform/**'
+      - '.github/workflows/infrastructure.yml'
+    branches:
+      - main
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: asia-southeast1
+
+jobs:
+  terraform:
+    name: Terraform ${{ github.event.inputs.terraform_action || 'plan' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
+
+      - name: Get current image tags
+        id: current_images
+        run: |
+          cd infrastructure/terraform/gcp
+          
+          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
+          DOCKER_REPO="asia-southeast1-docker.pkg.dev/${PROJECT_ID}/app-services"
+          
+          terraform init
+          
+          if terraform state list | grep -q "google_cloud_run_v2_service.api"; then
+            API_IMAGE=$(terraform state show google_cloud_run_v2_service.api | grep 'image' | head -1 | awk '{print $3}' | tr -d '"')
+            echo "api_image_url=${API_IMAGE}" >> $GITHUB_OUTPUT
+          else
+            echo "api_image_url=${DOCKER_REPO}/service-api:latest" >> $GITHUB_OUTPUT
+          fi
+          
+          if terraform state list | grep -q "google_compute_instance_template.sync_template"; then
+            echo "sync_image_url=${DOCKER_REPO}/service-sync:latest" >> $GITHUB_OUTPUT
+          else
+            echo "sync_image_url=${DOCKER_REPO}/service-sync:latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create terraform.tfvars
+        run: |
+          cd infrastructure/terraform/gcp
+          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
+          cat > terraform.tfvars << EOF
+          gcp_project_id = "${PROJECT_ID}"
+          gcp_region     = "${{ env.GCP_REGION }}"
+          api_image_url  = "${{ steps.current_images.outputs.api_image_url }}"
+          sync_image_url = "${{ steps.current_images.outputs.sync_image_url }}"
+          EOF
+
+      - name: Terraform Format Check
+        run: |
+          cd infrastructure/terraform/gcp
+          terraform fmt -check -recursive
+
+      - name: Terraform Init
+        run: |
+          cd infrastructure/terraform/gcp
+          terraform init
+
+      - name: Terraform Validate
+        run: |
+          cd infrastructure/terraform/gcp
+          terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          cd infrastructure/terraform/gcp
+          terraform plan -detailed-exitcode -out=tfplan
+        continue-on-error: true
+
+      - name: Plan Summary
+        run: |
+          cd infrastructure/terraform/gcp
+          case "${{ steps.plan.outputs.exitcode }}" in
+            0)
+              echo "## No Changes Required" >> $GITHUB_STEP_SUMMARY
+              echo "Infrastructure is up to date." >> $GITHUB_STEP_SUMMARY
+              ;;
+            1)
+              echo "## Terraform Plan Failed" >> $GITHUB_STEP_SUMMARY
+              echo "Please check the Terraform configuration for errors." >> $GITHUB_STEP_SUMMARY
+              exit 1
+              ;;
+            2)
+              echo "## Changes Detected" >> $GITHUB_STEP_SUMMARY
+              echo "Terraform has detected infrastructure changes." >> $GITHUB_STEP_SUMMARY
+              terraform show tfplan >> $GITHUB_STEP_SUMMARY
+              ;;
+          esac
+
+      - name: Terraform Apply
+        if: |
+          (github.event.inputs.terraform_action == 'apply' || 
+           (github.event_name == 'push' && steps.plan.outputs.exitcode == '2')) &&
+          (github.event.inputs.auto_approve == 'true' || github.event_name == 'push')
+        run: |
+          cd infrastructure/terraform/gcp
+          terraform apply -auto-approve tfplan
+
+      - name: Terraform Destroy
+        if: github.event.inputs.terraform_action == 'destroy' && github.event.inputs.auto_approve == 'true'
+        run: |
+          cd infrastructure/terraform/gcp
+          terraform destroy -auto-approve
+
+      - name: Get deployment outputs (if applied)
+        if: |
+          (github.event.inputs.terraform_action == 'apply' || github.event_name == 'push') &&
+          (github.event.inputs.auto_approve == 'true' || github.event_name == 'push')
+        id: terraform_outputs
+        run: |
+          cd infrastructure/terraform/gcp
+          if terraform state list | grep -q "google_cloud_run_v2_service.api"; then
+            echo "api_url=$(terraform output -raw api_service_url)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Manual approval required notice
+        if: |
+          (github.event.inputs.terraform_action == 'apply' || github.event.inputs.terraform_action == 'destroy') &&
+          github.event.inputs.auto_approve != 'true'
+        run: |
+          echo "## Manual Approval Required" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The Terraform plan has been generated but not applied." >> $GITHUB_STEP_SUMMARY
+          echo "To apply these changes:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Review the plan above" >> $GITHUB_STEP_SUMMARY
+          echo "2. Re-run this workflow with 'auto_approve' set to true" >> $GITHUB_STEP_SUMMARY
+          echo "3. Or apply manually using the CLI" >> $GITHUB_STEP_SUMMARY

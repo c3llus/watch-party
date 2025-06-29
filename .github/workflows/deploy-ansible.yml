@@ -1,0 +1,291 @@
+name: Deploy with Ansible Blue-Green
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+      image_tag:
+        description: 'Docker image tag to deploy (default: latest commit SHA)'
+        required: false
+        type: string
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: asia-southeast1
+
+jobs:
+  # Job 1: Build and Push Docker Images (same as before)
+  build_and_push_images:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' 
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    outputs:
+      api_image_tag: ${{ steps.image_tags.outputs.api_image_tag }}
+      sync_image_tag: ${{ steps.image_tags.outputs.sync_image_tag }}
+      short_sha: ${{ steps.image_tags.outputs.short_sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker to use gcloud as a credential helper
+        run: gcloud auth configure-docker asia-southeast1-docker.pkg.dev
+
+      - name: Generate image tags
+        id: image_tags
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
+          DOCKER_REPO="asia-southeast1-docker.pkg.dev/${PROJECT_ID}/app-services"
+          echo "api_image_tag=${DOCKER_REPO}/service-api:${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "sync_image_tag=${DOCKER_REPO}/service-sync:${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "API Image: ${DOCKER_REPO}/service-api:${SHORT_SHA}"
+          echo "Sync Image: ${DOCKER_REPO}/service-sync:${SHORT_SHA}"
+
+      - name: Build and push API service image
+        run: |
+          cd backend
+          docker build -f service-api/Dockerfile -t ${{ steps.image_tags.outputs.api_image_tag }} .
+          docker push ${{ steps.image_tags.outputs.api_image_tag }}
+
+      - name: Build and push Sync service image
+        run: |
+          cd backend
+          docker build -f service-sync/Dockerfile -t ${{ steps.image_tags.outputs.sync_image_tag }} .
+          docker push ${{ steps.image_tags.outputs.sync_image_tag }}
+
+  # Job 2: Deploy API to Cloud Run
+  deploy_api:
+    name: Deploy API to Cloud Run
+    needs: build_and_push_images
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy API to Cloud Run
+        run: |
+          gcloud run deploy watch-party-api \
+            --image ${{ needs.build_and_push_images.outputs.api_image_tag }} \
+            --region ${{ env.GCP_REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-env-vars="DEPLOYMENT_SHA=${{ needs.build_and_push_images.outputs.short_sha }}"
+
+  # Job 3: Deploy WebSocket Service with Ansible Blue-Green
+  deploy_websocket_ansible:
+    name: Deploy WebSocket with Ansible Blue-Green
+    needs: build_and_push_images
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible
+
+      - name: Get VM instance details
+        id: vm_details
+        run: |
+          INSTANCE_NAME=$(gcloud compute instances list --filter="name~service-sync" --format="value(name)" | head -1)
+          ZONE=$(gcloud compute instances list --filter="name~service-sync" --format="value(zone)" | head -1)
+          echo "instance_name=${INSTANCE_NAME}" >> $GITHUB_OUTPUT
+          echo "zone=${ZONE}" >> $GITHUB_OUTPUT
+
+      - name: Get infrastructure outputs from Terraform
+        run: |
+          cd infrastructure/terraform/gcp
+          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
+          cat > terraform.tfvars << EOF
+          gcp_project_id = "${PROJECT_ID}"
+          gcp_region     = "${{ env.GCP_REGION }}"
+          api_image_url  = "${{ needs.build_and_push_images.outputs.api_image_tag }}"
+          sync_image_url = "${{ needs.build_and_push_images.outputs.sync_image_tag }}"
+          EOF
+          
+          terraform init
+          echo "REDIS_HOST=$(terraform output -raw redis_host)" >> $GITHUB_ENV
+          echo "REDIS_PORT=$(terraform output -raw redis_port)" >> $GITHUB_ENV
+          echo "DB_HOST=$(terraform output -raw db_host)" >> $GITHUB_ENV
+          echo "DB_NAME=$(terraform output -raw db_name)" >> $GITHUB_ENV
+          echo "DB_USERNAME=$(terraform output -raw db_username)" >> $GITHUB_ENV
+          echo "DB_PASSWORD_SECRET=$(terraform output -raw db_password_secret_id)" >> $GITHUB_ENV
+          echo "JWT_SECRET_SECRET=$(terraform output -raw jwt_secret_secret_id)" >> $GITHUB_ENV
+          echo "WEBSOCKET_VM_IP=$(terraform output -raw websocket_vm_external_ip)" >> $GITHUB_ENV
+
+      - name: Create Ansible inventory
+        run: |
+          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
+          
+          cat > infrastructure/ansible/inventory/dynamic.yml << EOF
+          all:
+            children:
+              websocket_servers:
+                hosts:
+                  ${{ steps.vm_details.outputs.instance_name }}:
+                    ansible_host: ${{ steps.vm_details.outputs.instance_name }}
+                    ansible_user: marcellus
+                    zone: ${{ steps.vm_details.outputs.zone }}
+                vars:
+                  environment: ${{ github.event.inputs.environment || 'production' }}
+                  docker_registry: asia-southeast1-docker.pkg.dev
+                  project_id: "${PROJECT_ID}"
+                  app_name: watch-party-sync
+                  app_port: 8080
+                  image_tag: ${{ needs.build_and_push_images.outputs.short_sha }}
+                  sync_image_url: ${{ needs.build_and_push_images.outputs.sync_image_tag }}
+          EOF
+
+      - name: Configure Ansible for gcloud SSH
+        run: |
+          cat > infrastructure/ansible/ansible.cfg << EOF
+          [defaults]
+          host_key_checking = False
+          inventory = inventory/
+          remote_user = marcellus
+          timeout = 30
+          gathering = smart
+          stdout_callback = yaml
+
+          [ssh_connection]
+          ssh_executable = gcloud
+          ssh_args = compute ssh --zone=${{ steps.vm_details.outputs.zone }}
+          ssh_common_args = --ssh-flag="-o UserKnownHostsFile=/dev/null" --ssh-flag="-o StrictHostKeyChecking=no"
+          pipelining = True
+          EOF
+
+      - name: Run Ansible setup playbook (first time only)
+        run: |
+          cd infrastructure/ansible
+          ansible-playbook -i inventory/dynamic.yml playbooks/setup.yml --limit websocket_servers
+        continue-on-error: true  
+
+      - name: Deploy with Ansible Blue-Green
+        run: |
+          cd infrastructure/ansible
+          ansible-playbook -i inventory/dynamic.yml playbooks/deploy.yml --limit websocket_servers
+
+      - name: Verify deployment
+        run: |
+          sleep 30
+          INSTANCE_NAME=${{ steps.vm_details.outputs.instance_name }}
+          ZONE=${{ steps.vm_details.outputs.zone }}
+          
+          if gcloud compute ssh marcellus@${INSTANCE_NAME} --zone=${ZONE} --command="curl -f http://localhost/health"; then
+            echo "Sync service deployed successfully with blue-green deployment"
+          else
+            echo "Health check failed"
+            exit 1
+          fi
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          cd infrastructure/ansible
+          ansible-playbook -i inventory/dynamic.yml playbooks/rollback.yml --limit websocket_servers
+          echo "Deployment failed, rolled back to previous version"
+
+  # Job 4: Update Infrastructure (if needed)
+  update_infrastructure:
+    name: Update Infrastructure
+    needs: [deploy_api, deploy_websocket_ansible]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
+
+      - name: Update Terraform with new image URLs
+        run: |
+          cd infrastructure/terraform/gcp
+          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
+          cat > terraform.tfvars << EOF
+          gcp_project_id = "${PROJECT_ID}"
+          gcp_region     = "${{ env.GCP_REGION }}"
+          api_image_url  = "${{ needs.build_and_push_images.outputs.api_image_tag }}"
+          sync_image_url = "${{ needs.build_and_push_images.outputs.sync_image_tag }}"
+          EOF
+
+      - name: Terraform Plan
+        run: |
+          cd infrastructure/terraform/gcp
+          terraform init
+          terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        run: |
+          cd infrastructure/terraform/gcp
+          terraform apply tfplan
