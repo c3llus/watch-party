@@ -65,16 +65,12 @@ func (s *syncServer) Serve() {
 	router.Use(gin.Logger(), gin.Recovery())
 
 	// cors middleware
-	// corsConfig := cors.Config{
-	// 	AllowOrigins:     s.config.CORS.AllowedOrigins,
-	// 	AllowMethods:     s.config.CORS.AllowedMethods,
-	// 	AllowHeaders:     s.config.CORS.AllowedHeaders,
-	// 	AllowCredentials: true,
-	// }
-	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowAllOrigins = true
-	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
-	corsConfig.AllowHeaders = []string{"Content-Type", "Authorization", "X-Requested-With"}
+	corsConfig := cors.Config{
+		AllowOrigins:     s.config.CORS.AllowedOrigins,
+		AllowMethods:     s.config.CORS.AllowedMethods,
+		AllowHeaders:     s.config.CORS.AllowedHeaders,
+		AllowCredentials: true,
+	}
 	router.Use(cors.New(corsConfig))
 
 	// setup routes
@@ -85,15 +81,47 @@ func (s *syncServer) Serve() {
 		Handler: router,
 	}
 
+	sslEnabled := os.Getenv("SSL_ENABLED") == "true"
+	certPath := os.Getenv("SSL_CERT_PATH")
+	keyPath := os.Getenv("SSL_KEY_PATH")
+
 	// start server
 	go func() {
-		err := server.ListenAndServe()
+		var err error
+		if sslEnabled && certPath != "" && keyPath != "" {
+			logger.Infof("Starting SSL server on port %s", s.config.Port)
+			err = server.ListenAndServeTLS(certPath, keyPath)
+		} else {
+			logger.Infof("Starting HTTP server on port %s", s.config.Port)
+			err = server.ListenAndServe()
+		}
+
 		if err != nil && err != http.ErrServerClosed {
 			log.Fatalf("sync server failed to start: %v", err)
 		}
 	}()
 
-	logger.Infof("sync server started on port %s", s.getSyncPort())
+	if sslEnabled {
+		httpRouter := gin.New()
+		httpRouter.GET("/health", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"status": "healthy", "service": "sync"})
+		})
+
+		httpServer := &http.Server{
+			Addr:    ":8080",
+			Handler: httpRouter,
+		}
+
+		go func() {
+			logger.Info("Starting HTTP health check server on port 8080")
+			err := httpServer.ListenAndServe()
+			if err != nil && err != http.ErrServerClosed {
+				logger.Error(err, "HTTP health server failed")
+			}
+		}()
+	}
+
+	logger.Infof("sync server started on port %s (SSL: %v)", s.getSyncPort(), sslEnabled)
 
 	s.gracefulShutdown(server)
 

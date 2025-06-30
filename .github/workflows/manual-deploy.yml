@@ -52,11 +52,12 @@ jobs:
       - name: Determine image tags
         id: image_tags
         run: |
-          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
+          PROJECT_ID=$(gcloud config get-value project)
           DOCKER_REPO="${{ env.GCP_REGION }}-docker.pkg.dev/${PROJECT_ID}/app-services"
           
           if [ "${{ github.event.inputs.image_tag }}" = "latest" ]; then
-            TAG=$(echo ${{ github.sha }} | cut -c1-7)
+            TAG="${{ github.sha }}"
+            TAG="${TAG:0:7}"
           else
             TAG="${{ github.event.inputs.image_tag }}"
           fi
@@ -64,18 +65,16 @@ jobs:
           API_TAG="${DOCKER_REPO}/service-api:${TAG}"
           SYNC_TAG="${DOCKER_REPO}/service-sync:${TAG}"
           
-          echo "api_image_tag=${API_TAG}" >> $GITHUB_OUTPUT
-          echo "sync_image_tag=${SYNC_TAG}" >> $GITHUB_OUTPUT
-          echo "short_sha=${TAG}" >> $GITHUB_OUTPUT
-          
-          echo "API Image: ${API_TAG}"
-          echo "Sync Image: ${SYNC_TAG}"
+          # Use proper format for GitHub Actions outputs
+          {
+            echo "api_image_tag=${API_TAG}"
+            echo "sync_image_tag=${SYNC_TAG}"
+            echo "short_sha=${TAG}"
+          } >> $GITHUB_OUTPUT
 
       - name: Build and push images (if needed)
         if: github.event.inputs.force_rebuild == 'true' || github.event.inputs.image_tag == 'latest'
         run: |
-          echo "Building and pushing Docker images..."
-          
           cd backend
           docker build -f service-api/Dockerfile -t ${{ steps.image_tags.outputs.api_image_tag }} .
           docker push ${{ steps.image_tags.outputs.api_image_tag }}
@@ -86,30 +85,23 @@ jobs:
       - name: Check if images exist (if not rebuilding)
         if: github.event.inputs.force_rebuild != 'true' && github.event.inputs.image_tag != 'latest'
         run: |
-          echo "Checking if specified images exist..."
-          
           if ! gcloud container images describe ${{ steps.image_tags.outputs.api_image_tag }} >/dev/null 2>&1; then
-            echo "API image not found: ${{ steps.image_tags.outputs.api_image_tag }}"
             exit 1
           fi
           
           if ! gcloud container images describe ${{ steps.image_tags.outputs.sync_image_tag }} >/dev/null 2>&1; then
-            echo "Sync image not found: ${{ steps.image_tags.outputs.sync_image_tag }}"
             exit 1
           fi
-          
-          echo "All specified images exist"
 
-      # Deploy service-api to Cloud Run
       - name: Deploy API Service to Cloud Run
         run: |
-          echo "Deploying service-api to Cloud Run..."
-          
           gcloud run deploy service-api \
-            --image ${{ steps.image_tags.outputs.api_image_tag }} \
+            --image="${{ steps.image_tags.outputs.api_image_tag }}" \
             --region ${{ env.GCP_REGION }} \
             --platform managed \
+            --execution-environment gen2 \
             --allow-unauthenticated \
+            --vpc-connector serverless-connector \
             --port 8080 \
             --memory 512Mi \
             --cpu 1 \
@@ -117,102 +109,163 @@ jobs:
             --max-instances 10 \
             --concurrency 80 \
             --timeout 3600 \
-            --service-account cloud-run-services@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+            --service-account "github-actions-deploye@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
             --set-env-vars="ENVIRONMENT=production" \
             --quiet
 
-      # Install Ansible
+      # Install Ansible (kept for future use)
       - name: Install Ansible
         run: |
           python -m pip install --upgrade pip
           pip install ansible
+        continue-on-error: true
 
-      # Configure Ansible inventory dynamically
-      - name: Configure Ansible for Manual Deployment
+      # Direct deployment instead of Ansible
+      - name: Deploy WebSocket Service Directly
         run: |
-          cd infrastructure/ansible
-          
           INSTANCE_NAME=$(gcloud compute instances list --filter="name~service-sync" --format="value(name)" | head -1)
           ZONE=$(gcloud compute instances list --filter="name~service-sync" --format="value(zone)" | head -1 | sed 's|.*/||')
+          SYNC_IMAGE="${{ steps.image_tags.outputs.sync_image_tag }}"
           
-          if [ -z "$INSTANCE_NAME" ]; then
-            echo "No service-sync VM found. Please run infrastructure deployment first."
-            exit 1
+          echo "Deploying ${SYNC_IMAGE} to ${INSTANCE_NAME}"
+          
+          # Check if instance is running
+          INSTANCE_STATUS=$(gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} --format="get(status)")
+          echo "Instance status: ${INSTANCE_STATUS}"
+          
+          if [ "${INSTANCE_STATUS}" != "RUNNING" ]; then
+            echo "Starting instance..."
+            gcloud compute instances start ${INSTANCE_NAME} --zone=${ZONE}
+            sleep 30
           fi
           
-          echo "Found VM: $INSTANCE_NAME in zone: $ZONE"
+          # Wait for SSH to be ready
+          echo "Waiting for SSH to be ready..."
+          for i in {1..10}; do
+            if gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="echo 'SSH ready'" --ssh-flag="-o ConnectTimeout=10" --ssh-flag="-o StrictHostKeyChecking=no"; then
+              echo "SSH connection successful"
+              break
+            fi
+            echo "Attempt $i failed, waiting 15 seconds..."
+            sleep 15
+          done
           
-          # create dynamic inventory
-          cat > inventory/manual.yml << EOF
-          ---
-          all:
-            children:
-              websocket_servers:
-                hosts:
-                  ${INSTANCE_NAME}:
-                    ansible_host: ${INSTANCE_NAME}
-                    ansible_user: marcellus
-                    gcp_zone: ${ZONE}
-                vars:
-                  environment: ${{ github.event.inputs.environment }}
-                  docker_registry: ${{ env.GCP_REGION }}-docker.pkg.dev
-                  project_id: ${{ env.GCP_PROJECT_ID }}
-                  app_name: watch-party-sync
-                  sync_image_tag: ${{ steps.image_tags.outputs.sync_image_tag }}
+          # Configure Docker authentication
+          echo "Configuring Docker authentication..."
+          gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="
+            gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+          " --ssh-flag="-o StrictHostKeyChecking=no"
+          
+          # Create and run deployment script
+          cat > deploy_script.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          SYNC_IMAGE="$1"
+          APP_NAME="watch-party-sync"
+          
+          echo "Pulling new image: ${SYNC_IMAGE}"
+          docker pull ${SYNC_IMAGE}
+          
+          # Stop and remove current container
+          echo "Stopping current container..."
+          docker stop ${APP_NAME}-current || true
+          docker rm ${APP_NAME}-current || true
+          
+          # Start new container
+          echo "Starting new container with image: ${SYNC_IMAGE}"
+          docker run -d \
+            --name ${APP_NAME}-current \
+            --restart unless-stopped \
+            -p 8080:8080 \
+            -e ENVIRONMENT=production \
+            ${SYNC_IMAGE}
+          
+          # Wait for container to start
+          echo "Waiting for container to start..."
+          sleep 15
+          
+          # Health check
+          echo "Performing health check..."
+          for i in {1..6}; do
+            if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Health check passed on attempt $i"
+              exit 0
+            else
+              echo "Health check failed on attempt $i, waiting 10 seconds..."
+              if [ $i -eq 6 ]; then
+                echo "Health check failed after 6 attempts"
+                exit 1
+              fi
+              sleep 10
+            fi
+          done
           EOF
           
-          # configure Ansible to use gcloud compute ssh
-          cat > ansible.cfg << EOF
-          [defaults]
-          host_key_checking = False
-          inventory = inventory/
-          remote_user = marcellus
-          timeout = 30
-          gathering = smart
-          stdout_callback = yaml
-          stderr_callback = yaml
-          
-          [inventory]
-          enable_plugins = yaml
-          
-          [ssh_connection]
-          ssh_executable = gcloud
-          ssh_args = compute ssh --zone=%(gcp_zone)s
-          ssh_common_args = --ssh-flag="-o UserKnownHostsFile=/dev/null" --ssh-flag="-o StrictHostKeyChecking=no"
-          pipelining = True
-          EOF
+          # Deploy
+          gcloud compute scp --zone=${ZONE} deploy_script.sh ${INSTANCE_NAME}:~/ --ssh-flag="-o StrictHostKeyChecking=no"
+          gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="chmod +x ~/deploy_script.sh && ~/deploy_script.sh '${SYNC_IMAGE}'" --ssh-flag="-o StrictHostKeyChecking=no"
 
-      # Run Ansible setup (if needed)
-      - name: Run Ansible Setup (if needed)
+      # Ensure Docker is installed
+      - name: Ensure Docker is installed on VM
         run: |
-          cd infrastructure/ansible
-          
           INSTANCE_NAME=$(gcloud compute instances list --filter="name~service-sync" --format="value(name)" | head -1)
           ZONE=$(gcloud compute instances list --filter="name~service-sync" --format="value(zone)" | head -1 | sed 's|.*/||')
           
-          if ! gcloud compute ssh marcellus@${INSTANCE_NAME} --zone=${ZONE} --command="which docker" >/dev/null 2>&1; then
-            echo "Running initial setup - installing packages..."
-            ansible-playbook -i inventory/manual.yml playbooks/setup.yml -v
+          echo "Checking if Docker is installed on ${INSTANCE_NAME}..."
+          if ! gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="which docker" --ssh-flag="-o StrictHostKeyChecking=no" >/dev/null 2>&1; then
+            echo "Installing Docker on ${INSTANCE_NAME}..."
+            gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="
+              # Update package list
+              sudo apt-get update
+              
+              # Install Docker if not present
+              if ! command -v docker &> /dev/null; then
+                # Install Docker
+                sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
+                curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                echo \"deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian \$(lsb_release -cs) stable\" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                sudo apt-get update
+                sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+                
+                # Add user to docker group
+                sudo usermod -aG docker \$USER
+                
+                # Start and enable Docker
+                sudo systemctl start docker
+                sudo systemctl enable docker
+                
+                # Verify Docker installation
+                sudo docker --version
+              fi
+            " --ssh-flag="-o StrictHostKeyChecking=no"
           else
-            echo "Setup already completed - Docker found on VM"
+            echo "Docker is already installed on ${INSTANCE_NAME}"
           fi
+        continue-on-error: true
 
-      # Blue-Green Deployment
-      - name: Run Blue-Green Deployment
+      # Verify deployment worked
+      - name: Verify WebSocket Deployment
         run: |
-          cd infrastructure/ansible
-          echo "Starting blue-green deployment to ${{ github.event.inputs.environment }}..."
-          ansible-playbook -i inventory/manual.yml playbooks/deploy.yml -v
-
-      # Verify Deployment
-      - name: Verify Deployment Health
-        run: |
-          cd infrastructure/ansible
-          ansible-playbook -i inventory/manual.yml playbooks/verify.yml -v || {
-            echo "Deployment verification failed - initiating rollback..."
-            ansible-playbook -i inventory/manual.yml playbooks/rollback.yml -v
-            exit 1
-          }
+          INSTANCE_NAME=$(gcloud compute instances list --filter="name~service-sync" --format="value(name)" | head -1)
+          ZONE=$(gcloud compute instances list --filter="name~service-sync" --format="value(zone)" | head -1 | sed 's|.*/||')
+          
+          echo "Verifying WebSocket deployment on ${INSTANCE_NAME}"
+          sleep 10
+          
+          # Additional verification outside the deployment script
+          for i in {1..5}; do
+            if gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="curl -f -s http://localhost:8080/health" --ssh-flag="-o StrictHostKeyChecking=no"; then
+              echo "WebSocket service verification successful"
+              break
+            fi
+            echo "WebSocket verification attempt $i failed, waiting 10 seconds..."
+            if [ $i -eq 5 ]; then
+              echo "WebSocket health check failed after 5 attempts!"
+              exit 1
+            fi
+            sleep 10
+          done
 
       # Get final status
       - name: Get Deployment URLs
@@ -229,15 +282,11 @@ jobs:
       # Final validation
       - name: Final Health Check
         run: |
-          echo "Performing final health checks..."
-          
           API_URL="${{ steps.deployment_urls.outputs.api_url }}"
           for i in {1..10}; do
             if curl -f -s "${API_URL}/health" > /dev/null 2>&1; then
-              echo "API service is healthy!"
               break
             else
-              echo "Waiting for API service... (attempt $i/10)"
               sleep 10
             fi
           done
@@ -245,10 +294,8 @@ jobs:
           WS_IP="${{ steps.deployment_urls.outputs.websocket_ip }}"
           for i in {1..10}; do
             if curl -f -s "http://${WS_IP}/health" > /dev/null 2>&1; then
-              echo "WebSocket service is healthy!"
               break
             else
-              echo "Waiting for WebSocket service... (attempt $i/10)"
               sleep 10
             fi
           done

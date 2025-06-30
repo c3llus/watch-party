@@ -215,7 +215,7 @@ export function useHlsPlayer(
       return
     }
 
-    let pollInterval: number
+    let pollInterval: ReturnType<typeof setInterval> | undefined
 
     const initializePlayer = async () => {
       const videoEl = videoRef.current

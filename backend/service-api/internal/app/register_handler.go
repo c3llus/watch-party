@@ -2,6 +2,7 @@ package app
 
 import (
 	"watch-party/pkg/auth"
+	"watch-party/pkg/logger"
 	"watch-party/pkg/model"
 	middleware "watch-party/service-api/internal/app/middleware"
 
@@ -14,21 +15,45 @@ func (a *appServer) RegisterHandlers() *gin.Engine {
 	handler := gin.New()
 
 	// middlewares
+	logger.Debugf("allowing CORS origins: %v", a.config.CORS.AllowedOrigins)
+	logger.Debugf("allowing CORS methods: %v", a.config.CORS.AllowedMethods)
+	logger.Debugf("allowing CORS headers: %v", a.config.CORS.AllowedHeaders)
+
+	// cors middleware
+	corsConfig := cors.Config{
+		AllowOrigins:     a.config.CORS.AllowedOrigins,
+		AllowMethods:     a.config.CORS.AllowedMethods,
+		AllowHeaders:     a.config.CORS.AllowedHeaders,
+		AllowCredentials: true,
+		AllowOriginFunc: func(origin string) bool {
+			for _, allowedOrigin := range a.config.CORS.AllowedOrigins {
+				if origin == allowedOrigin {
+					return true
+				}
+			}
+			return false
+		},
+	}
+	handler.Use(cors.New(corsConfig))
 	handler.Use(gin.Logger())
 	handler.Use(gin.Recovery())
 
-	// cors middleware
-	// corsConfig := cors.Config{
-	// 	AllowOrigins:     a.config.CORS.AllowedOrigins,
-	// 	AllowMethods:     a.config.CORS.AllowedMethods,
-	// 	AllowHeaders:     a.config.CORS.AllowedHeaders,
-	// 	AllowCredentials: true,
-	// }
-	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowAllOrigins = true
-	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
-	corsConfig.AllowHeaders = []string{"Content-Type", "Authorization", "X-Requested-With", "X-Guest-Token"}
-	handler.Use(cors.New(corsConfig))
+	handler.OPTIONS("/*path", func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if origin != "" {
+			for _, allowedOrigin := range a.config.CORS.AllowedOrigins {
+				if origin == allowedOrigin {
+					c.Header("Access-Control-Allow-Origin", origin)
+					break
+				}
+			}
+		}
+		c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type,Authorization,User-Agent,Sec-Ch-Ua,Sec-Ch-Ua-Mobile,Sec-Ch-Ua-Platform")
+		c.Header("Access-Control-Allow-Credentials", "true")
+		c.Header("Access-Control-Max-Age", "43200")
+		c.Status(200)
+	})
 
 	// create JWT middleware
 	jwtManager := auth.NewJWTManager(a.config.JWTSecret)

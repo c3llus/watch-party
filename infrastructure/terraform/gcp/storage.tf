@@ -15,7 +15,7 @@ resource "google_storage_bucket" "videos" {
   uniform_bucket_level_access = true
 
   cors {
-    origin          = ["https://localhost:5173", "http://localhost:5173", "http://localhost:3000"]
+    origin          = ["https://localhost:5173", "http://localhost:5173", "http://localhost:3000", "https://watch-party.c3llus.dev", "https://watch-party.c3llus.dev/"]
     method          = ["GET", "HEAD", "PUT", "POST", "DELETE"]
     response_header = ["Content-Type", "Authorization", "Range", "Accept-Ranges"]
     max_age_seconds = 3600

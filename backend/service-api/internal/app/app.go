@@ -142,6 +142,8 @@ func (a *appServer) gracefulShutdown(server *http.Server) {
 			logger.Info("server graceful shutdown")
 		}
 
+		logger.Flush()
+
 		stopCtx()
 	}()
 

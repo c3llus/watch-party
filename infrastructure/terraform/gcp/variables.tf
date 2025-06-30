@@ -12,9 +12,11 @@ variable "gcp_region" {
 variable "api_image_url" {
   description = "The full URL of the API service Docker image."
   type        = string
+  default     = "asia-southeast1-docker.pkg.dev/nafas-id-marcellus/app-services/service-api:latest"
 }
 
 variable "sync_image_url" {
   description = "The full URL of the Sync service Docker image."
   type        = string
+  default     = "asia-southeast1-docker.pkg.dev/nafas-id-marcellus/app-services/service-sync:latest"
 }

@@ -90,54 +90,16 @@ resource "google_cloud_run_v2_service" "api" {
       image = var.api_image_url
 
       env {
-        name  = "DB_HOST"
-        value = google_sql_database_instance.postgres.private_ip_address
+        name  = "ENVIRONMENT"
+        value = "production"
       }
       env {
-        name  = "DB_NAME"
-        value = google_sql_database.main_db.name
+        name  = "GCP_PROJECT_ID"
+        value = var.gcp_project_id
       }
       env {
-        name  = "DB_USERNAME"
-        value = google_sql_user.users.name
-      }
-      env {
-        name = "DB_PASSWORD"
-        value_source {
-          secret_key_ref {
-            secret  = google_secret_manager_secret.db_password.secret_id
-            version = "latest"
-          }
-        }
-      }
-      env {
-        name  = "DB_PORT"
-        value = "5432"
-      }
-      env {
-        name  = "REDIS_HOST"
-        value = google_redis_instance.redis.host
-      }
-      env {
-        name  = "REDIS_PORT"
-        value = "6379"
-      }
-      env {
-        name  = "STORAGE_PROVIDER"
-        value = "gcs"
-      }
-      env {
-        name  = "STORAGE_GCS_BUCKET"
-        value = google_storage_bucket.videos.name
-      }
-      env {
-        name = "JWT_SECRET"
-        value_source {
-          secret_key_ref {
-            secret  = google_secret_manager_secret.jwt_secret.secret_id
-            version = "latest"
-          }
-        }
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = var.gcp_project_id
       }
 
       resources {
@@ -182,6 +144,18 @@ resource "google_secret_manager_secret_iam_member" "compute_jwt_secret" {
   member    = "serviceAccount:${google_service_account.compute_sa.email}"
 }
 
+resource "google_project_iam_member" "compute_sa_secret_manager_accessor" {
+  project = var.gcp_project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.compute_sa.email}"
+}
+
+resource "google_project_iam_member" "compute_sa_artifact_registry_reader" {
+  project = var.gcp_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.compute_sa.email}"
+}
+
 data "google_compute_zones" "available" {
   project = var.gcp_project_id
   region  = var.gcp_region
@@ -211,7 +185,6 @@ resource "google_compute_instance_template" "sync_template" {
     email  = google_service_account.compute_sa.email
     scopes = ["cloud-platform"]
   }
-
 
   tags = ["websocket-service"]
 
@@ -264,14 +237,14 @@ resource "google_compute_health_check" "sync_health_check" {
   depends_on = [google_project_service.apis]
 }
 
-resource "google_compute_firewall" "allow_websocket" {
+resource "google_compute_firewall" "allow_ssh" {
   project = var.gcp_project_id
-  name    = "allow-websocket-traffic"
+  name    = "allow-ssh-access"
   network = google_compute_network.vpc_network.id
 
   allow {
     protocol = "tcp"
-    ports    = ["8080"]
+    ports    = ["22"]
   }
 
   source_ranges = ["0.0.0.0/0"]
@@ -280,25 +253,42 @@ resource "google_compute_firewall" "allow_websocket" {
   depends_on = [google_project_service.apis]
 }
 
-resource "google_compute_region_backend_service" "sync_backend" {
-  project  = var.gcp_project_id
-  name     = "service-sync-backend"
-  region   = var.gcp_region
-  protocol = "TCP"
+resource "google_compute_firewall" "allow_websocket" {
+  project = var.gcp_project_id
+  name    = "allow-websocket-traffic"
+  network = google_compute_network.vpc_network.id
 
-  backend {
-    group = google_compute_region_instance_group_manager.sync_igm.instance_group
+  allow {
+    protocol = "tcp"
+    ports    = ["8080", "443"]
   }
 
-  health_checks = [google_compute_health_check.sync_health_check.id]
+  source_ranges = ["0.0.0.0/0"]
+  target_tags   = ["websocket-service"]
 
-  session_affinity = "CLIENT_IP"
-
-  depends_on = [
-    google_compute_region_instance_group_manager.sync_igm,
-    google_compute_health_check.sync_health_check
-  ]
+  depends_on = [google_project_service.apis]
 }
+
+# Regional backend service - disabled in favor of global backend service for SSL termination
+# resource "google_compute_region_backend_service" "sync_backend" {
+#   project  = var.gcp_project_id
+#   name     = "service-sync-backend"
+#   region   = var.gcp_region
+#   protocol = "TCP"
+
+#   backend {
+#     group = google_compute_region_instance_group_manager.sync_igm.instance_group
+#   }
+
+#   health_checks = [google_compute_health_check.sync_health_check.id]
+
+#   session_affinity = "CLIENT_IP"
+
+#   depends_on = [
+#     google_compute_region_instance_group_manager.sync_igm,
+#     google_compute_health_check.sync_health_check
+#   ]
+# }
 
 resource "google_cloud_run_service_iam_binding" "api_noauth" {
   project  = var.gcp_project_id
@@ -306,6 +296,7 @@ resource "google_cloud_run_service_iam_binding" "api_noauth" {
   service  = google_cloud_run_v2_service.api.name
   role     = "roles/run.invoker"
   members = [
+    "allUsers",
     "serviceAccount:${google_service_account.cloud_run_sa.email}",
     "serviceAccount:${google_service_account.compute_sa.email}",
   ]
@@ -335,4 +326,127 @@ resource "google_storage_bucket_iam_member" "cloud_run_storage" {
   bucket = google_storage_bucket.videos.name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.cloud_run_sa.email}"
+}
+
+resource "google_project_iam_member" "cloud_run_service_agent" {
+  project = var.gcp_project_id
+  role    = "roles/run.serviceAgent"
+  member  = "serviceAccount:${google_service_account.cloud_run_sa.email}"
+}
+
+resource "google_service_account_iam_binding" "github_actions_service_account_user" {
+  service_account_id = google_service_account.cloud_run_sa.name
+  role               = "roles/iam.serviceAccountUser"
+
+  members = [
+    "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+  ]
+}
+
+resource "google_project_iam_member" "github_actions_compute_os_login" {
+  project = var.gcp_project_id
+  role    = "roles/compute.osLogin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_compute_instance_admin" {
+  project = var.gcp_project_id
+  role    = "roles/compute.instanceAdmin.v1"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_compute_viewer" {
+  project = var.gcp_project_id
+  role    = "roles/compute.viewer"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_iam_security_admin" {
+  project = var.gcp_project_id
+  role    = "roles/iam.securityAdmin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_service_account_admin" {
+  project = var.gcp_project_id
+  role    = "roles/iam.serviceAccountAdmin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_cloud_run_admin" {
+  project = var.gcp_project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_storage_admin" {
+  project = var.gcp_project_id
+  role    = "roles/storage.admin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_secret_manager_admin" {
+  project = var.gcp_project_id
+  role    = "roles/secretmanager.admin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_artifactregistry_admin" {
+  project = var.gcp_project_id
+  role    = "roles/artifactregistry.admin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_artifactregistry_writer" {
+  project = var.gcp_project_id
+  role    = "roles/artifactregistry.writer"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_cloudsql_admin" {
+  project = var.gcp_project_id
+  role    = "roles/cloudsql.admin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_compute_admin" {
+  project = var.gcp_project_id
+  role    = "roles/compute.admin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_compute_network_admin" {
+  project = var.gcp_project_id
+  role    = "roles/compute.networkAdmin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_redis_admin" {
+  project = var.gcp_project_id
+  role    = "roles/redis.admin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_servicenetworking_service_agent" {
+  project = var.gcp_project_id
+  role    = "roles/servicenetworking.serviceAgent"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_vpcaccess_admin" {
+  project = var.gcp_project_id
+  role    = "roles/vpcaccess.admin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_serviceusage_admin" {
+  project = var.gcp_project_id
+  role    = "roles/serviceusage.serviceUsageAdmin"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "github_actions_service_account_user_project" {
+  project = var.gcp_project_id
+  role    = "roles/iam.serviceAccountUser"
+  member  = "serviceAccount:github-actions-deployer@${var.gcp_project_id}.iam.gserviceaccount.com"
 }

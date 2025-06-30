@@ -29,15 +29,17 @@ jobs:
   build_and_push_images:
     name: Build & Push Docker Images
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' 
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: 'read'
       id-token: 'write'
 
     outputs:
+      short_sha: ${{ steps.image_tags.outputs.short_sha }}
+      docker_repo_base: ${{ steps.image_tags.outputs.docker_repo_base }}
+      registry_path: ${{ steps.image_tags.outputs.registry_path }}
       api_image_tag: ${{ steps.image_tags.outputs.api_image_tag }}
       sync_image_tag: ${{ steps.image_tags.outputs.sync_image_tag }}
-      short_sha: ${{ steps.image_tags.outputs.short_sha }}
 
     steps:
       - name: Checkout code
@@ -59,32 +61,31 @@ jobs:
         id: image_tags
         run: |
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
-          DOCKER_REPO="asia-southeast1-docker.pkg.dev/${PROJECT_ID}/app-services"
-          echo "api_image_tag=${DOCKER_REPO}/service-api:${SHORT_SHA}" >> $GITHUB_OUTPUT
-          echo "sync_image_tag=${DOCKER_REPO}/service-sync:${SHORT_SHA}" >> $GITHUB_OUTPUT
           echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
-          echo "API Image: ${DOCKER_REPO}/service-api:${SHORT_SHA}"
-          echo "Sync Image: ${DOCKER_REPO}/service-sync:${SHORT_SHA}"
-
       - name: Build and push API service image
         run: |
           cd backend
-          docker build -f service-api/Dockerfile -t ${{ steps.image_tags.outputs.api_image_tag }} .
-          docker push ${{ steps.image_tags.outputs.api_image_tag }}
-
+          SHORT_SHA="${{ steps.image_tags.outputs.short_sha }}"
+          API_IMAGE="asia-southeast1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app-services/service-api:${SHORT_SHA}"
+          
+          echo "Building API image: ${API_IMAGE}"
+          docker build -f service-api/Dockerfile -t "${API_IMAGE}" .
+          docker push "${API_IMAGE}"
       - name: Build and push Sync service image
         run: |
           cd backend
-          docker build -f service-sync/Dockerfile -t ${{ steps.image_tags.outputs.sync_image_tag }} .
-          docker push ${{ steps.image_tags.outputs.sync_image_tag }}
-
+          SHORT_SHA="${{ steps.image_tags.outputs.short_sha }}"
+          SYNC_IMAGE="asia-southeast1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app-services/service-sync:${SHORT_SHA}"
+          
+          echo "Building Sync image: ${SYNC_IMAGE}"
+          docker build -f service-sync/Dockerfile -t "${SYNC_IMAGE}" .
+          docker push "${SYNC_IMAGE}"
   # Job 2: Deploy API to Cloud Run
   deploy_api:
     name: Deploy API to Cloud Run
     needs: build_and_push_images
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -102,23 +103,35 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Deploy API to Cloud Run
+      - name: Construct and deploy API image
         run: |
-          gcloud run deploy watch-party-api \
-            --image ${{ needs.build_and_push_images.outputs.api_image_tag }} \
+          SHORT_SHA="${{ needs.build_and_push_images.outputs.short_sha }}"
+          API_IMAGE="asia-southeast1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app-services/service-api:${SHORT_SHA}"
+          
+          echo "Deploying with image: ${API_IMAGE}"
+          if [ -z "${API_IMAGE}" ]; then
+            echo "ERROR: API_IMAGE is empty!"
+            echo "Available outputs from build job:"
+            echo "short_sha: ${{ needs.build_and_push_images.outputs.short_sha }}"
+            echo "api_image_tag: ${{ needs.build_and_push_images.outputs.api_image_tag }}"
+            echo "sync_image_tag: ${{ needs.build_and_push_images.outputs.sync_image_tag }}"
+            exit 1
+          fi
+          gcloud run deploy service-api \
+            --image "${API_IMAGE}" \
             --region ${{ env.GCP_REGION }} \
             --platform managed \
+            --execution-environment gen2 \
             --allow-unauthenticated \
-            --service-account cloud-run-services@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+            --vpc-connector serverless-connector \
+            --service-account "${RUNTIME_SA_EMAIL}" \
             --set-env-vars="ENVIRONMENT=production" \
             --quiet
-
-  # Job 3: Deploy WebSocket Service with Ansible Blue-Green
-  deploy_websocket_ansible:
-    name: Deploy WebSocket with Ansible Blue-Green
+  deploy_websocket_direct:
+    name: Deploy WebSocket Service
     needs: build_and_push_images
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -135,11 +148,6 @@ jobs:
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
-
-      - name: Install Ansible
-        run: |
-          python -m pip install --upgrade pip
-          pip install ansible
 
       - name: Get VM instance details
         id: vm_details
@@ -148,16 +156,23 @@ jobs:
           ZONE=$(gcloud compute instances list --filter="name~service-sync" --format="value(zone)" | head -1)
           echo "instance_name=${INSTANCE_NAME}" >> $GITHUB_OUTPUT
           echo "zone=${ZONE}" >> $GITHUB_OUTPUT
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
 
       - name: Get infrastructure outputs from Terraform
         run: |
           cd infrastructure/terraform/gcp
-          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
+          PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          API_IMAGE="${{ needs.build_and_push_images.outputs.api_image_tag }}"
+          SYNC_IMAGE="${{ needs.build_and_push_images.outputs.sync_image_tag }}"
+          
           cat > terraform.tfvars << EOF
           gcp_project_id = "${PROJECT_ID}"
           gcp_region     = "${{ env.GCP_REGION }}"
-          api_image_url  = "${{ needs.build_and_push_images.outputs.api_image_tag }}"
-          sync_image_url = "${{ needs.build_and_push_images.outputs.sync_image_tag }}"
+          api_image_url  = "${API_IMAGE}"
+          sync_image_url = "${SYNC_IMAGE}"
           EOF
           
           terraform init
@@ -169,125 +184,218 @@ jobs:
           echo "DB_PASSWORD_SECRET=$(terraform output -raw db_password_secret_id)" >> $GITHUB_ENV
           echo "JWT_SECRET_SECRET=$(terraform output -raw jwt_secret_secret_id)" >> $GITHUB_ENV
           echo "WEBSOCKET_VM_IP=$(terraform output -raw websocket_vm_external_ip)" >> $GITHUB_ENV
-
-      - name: Create Ansible inventory
+      - name: Deploy WebSocket Service
         run: |
-          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
+          INSTANCE_NAME="${{ steps.vm_details.outputs.instance_name }}"
+          ZONE="${{ steps.vm_details.outputs.zone }}"
+          PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          SHORT_SHA="${{ needs.build_and_push_images.outputs.short_sha }}"
+          SYNC_IMAGE="${{ needs.build_and_push_images.outputs.sync_image_tag }}"
           
-          cat > infrastructure/ansible/inventory/dynamic.yml << EOF
-          all:
-            children:
-              websocket_servers:
-                hosts:
-                  ${{ steps.vm_details.outputs.instance_name }}:
-                    ansible_host: ${{ steps.vm_details.outputs.instance_name }}
-                    ansible_user: marcellus
-                    zone: ${{ steps.vm_details.outputs.zone }}
-                vars:
-                  environment: ${{ github.event.inputs.environment || 'production' }}
-                  docker_registry: asia-southeast1-docker.pkg.dev
-                  project_id: "${PROJECT_ID}"
-                  app_name: watch-party-sync
-                  app_port: 8080
-                  image_tag: ${{ needs.build_and_push_images.outputs.short_sha }}
-                  sync_image_url: ${{ needs.build_and_push_images.outputs.sync_image_tag }}
+          echo "Deploying ${SYNC_IMAGE} to ${INSTANCE_NAME}"
+          
+          # Check if instance is running
+          INSTANCE_STATUS=$(gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} --format="get(status)")
+          echo "Instance status: ${INSTANCE_STATUS}"
+          
+          if [ "${INSTANCE_STATUS}" != "RUNNING" ]; then
+            echo "Starting instance..."
+            gcloud compute instances start ${INSTANCE_NAME} --zone=${ZONE}
+            sleep 30
+          fi
+          
+          # Wait for SSH to be ready
+          echo "Waiting for SSH to be ready..."
+          for i in {1..10}; do
+            if gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="echo 'SSH ready'" --ssh-flag="-o ConnectTimeout=10" --ssh-flag="-o StrictHostKeyChecking=no"; then
+              echo "SSH connection successful"
+              break
+            fi
+            echo "Attempt $i failed, waiting 15 seconds..."
+            sleep 15
+          done
+          
+          # Configure Docker authentication on the VM
+          echo "Configuring Docker authentication on VM..."
+          gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="
+            # Create Docker config directory if it doesn't exist
+            mkdir -p ~/.docker
+            
+            # Use the compute instance's default service account to get an access token
+            # and configure Docker credential helper
+            ACCESS_TOKEN=\$(curl -s 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' -H 'Metadata-Flavor: Google' | grep -o '\"access_token\":\"[^\"]*' | cut -d'\"' -f4)
+            
+            # Configure Docker to use the access token for Artifact Registry
+            echo '{\"auths\":{\"asia-southeast1-docker.pkg.dev\":{\"auth\":\"'$(echo -n \"oauth2accesstoken:\$ACCESS_TOKEN\" | base64 -w 0)'\"}}}'> ~/.docker/config.json
+            
+            echo 'Docker authentication configured successfully'
+          " --ssh-flag="-o StrictHostKeyChecking=no"
+      - name: Ensure Docker is installed on VM
+        run: |
+          INSTANCE_NAME="${{ steps.vm_details.outputs.instance_name }}"
+          ZONE="${{ steps.vm_details.outputs.zone }}"
+          
+          # Ensure Docker is installed on VM
+          echo "Checking if Docker is installed on ${INSTANCE_NAME}..."
+          if ! gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="which docker" --ssh-flag="-o StrictHostKeyChecking=no" >/dev/null 2>&1; then
+            echo "Installing Docker on ${INSTANCE_NAME}..."
+            gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="
+              # Update package list
+              sudo apt-get update
+              
+              # Install Docker if not present
+              if ! command -v docker &> /dev/null; then
+                # Install Docker
+                sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
+                curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                echo \"deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian \$(lsb_release -cs) stable\" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                sudo apt-get update
+                sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+                
+                # Add user to docker group
+                sudo usermod -aG docker \$USER
+                
+                # Start and enable Docker
+                sudo systemctl start docker
+                sudo systemctl enable docker
+                
+                # Verify Docker installation
+                sudo docker --version
+              fi
+            " --ssh-flag="-o StrictHostKeyChecking=no"
+          else
+            echo "Docker is already installed on ${INSTANCE_NAME}"
+          fi
+        continue-on-error: true
+
+      - name: Deploy WebSocket Service
+        run: |
+          INSTANCE_NAME="${{ steps.vm_details.outputs.instance_name }}"
+          ZONE="${{ steps.vm_details.outputs.zone }}"
+          SYNC_IMAGE="${{ needs.build_and_push_images.outputs.sync_image_tag }}"
+          
+          # Simple blue-green deployment script
+          cat > deploy_script.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          SYNC_IMAGE="$1"
+          APP_NAME="watch-party-sync"
+          
+          echo "Pulling new image: ${SYNC_IMAGE}"
+          docker pull ${SYNC_IMAGE}
+          
+          # Stop and remove current container
+          echo "Stopping current container..."
+          docker stop ${APP_NAME}-current || true
+          docker rm ${APP_NAME}-current || true
+          
+          # Get instance external IP for SSL certificate
+          INSTANCE_IP=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip)
+          
+          # Generate SSL certificate if not exists
+          if [ ! -f /etc/ssl/certs/server.crt ]; then
+            echo "Generating SSL certificate..."
+            sudo mkdir -p /etc/ssl/private /etc/ssl/certs
+            sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+              -keyout /etc/ssl/private/server.key \
+              -out /etc/ssl/certs/server.crt \
+              -subj "/C=US/ST=CA/L=SF/O=WatchParty/CN=${INSTANCE_IP}" \
+              -addext "subjectAltName=IP:${INSTANCE_IP}"
+            sudo chmod 644 /etc/ssl/certs/server.crt
+            sudo chmod 600 /etc/ssl/private/server.key
+          fi
+          
+          # Start new container with SSL support
+          echo "Starting new container with image: ${SYNC_IMAGE}"
+          docker run -d \
+            --name ${APP_NAME}-current \
+            --restart unless-stopped \
+            -p 443:8443 \
+            -p 8080:8080 \
+            -v /etc/ssl:/etc/ssl:ro \
+            -e ENVIRONMENT=production \
+            -e SSL_ENABLED=true \
+            -e SSL_CERT_PATH=/etc/ssl/certs/server.crt \
+            -e SSL_KEY_PATH=/etc/ssl/private/server.key \
+            ${SYNC_IMAGE}
+          
+          # Wait for container to start
+          echo "Waiting for container to start..."
+          sleep 15
+          
+          # Health check (use HTTP for health check)
+          echo "Performing health check..."
+          for i in {1..6}; do
+            if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Health check passed on attempt $i"
+              break
+            else
+              echo "Health check failed on attempt $i, waiting 10 seconds..."
+              if [ $i -eq 6 ]; then
+                echo "Health check failed after 6 attempts"
+                exit 1
+              fi
+              sleep 10
+            fi
+          done
+          
+          echo "Deployment successful"
+          # Clean up old images
+          docker image prune -f
           EOF
-
-      - name: Configure Ansible for gcloud SSH
-        run: |
-          cat > infrastructure/ansible/ansible.cfg << EOF
-          [defaults]
-          host_key_checking = False
-          inventory = inventory/
-          remote_user = marcellus
-          timeout = 30
-          gathering = smart
-          stdout_callback = yaml
-
-          [ssh_connection]
-          ssh_executable = gcloud
-          ssh_args = compute ssh --zone=${{ steps.vm_details.outputs.zone }}
-          ssh_common_args = --ssh-flag="-o UserKnownHostsFile=/dev/null" --ssh-flag="-o StrictHostKeyChecking=no"
-          pipelining = True
-          EOF
-
-      - name: Run Ansible setup playbook (first time only)
-        run: |
-          cd infrastructure/ansible
-          ansible-playbook -i inventory/dynamic.yml playbooks/setup.yml --limit websocket_servers
-        continue-on-error: true  
-
-      - name: Deploy with Ansible Blue-Green
-        run: |
-          cd infrastructure/ansible
-          ansible-playbook -i inventory/dynamic.yml playbooks/deploy.yml --limit websocket_servers
-
+          
+          # Copy and execute deployment script
+          gcloud compute scp --zone=${ZONE} deploy_script.sh ${INSTANCE_NAME}:~/ --ssh-flag="-o StrictHostKeyChecking=no"
+          gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="chmod +x ~/deploy_script.sh && ~/deploy_script.sh '${SYNC_IMAGE}'" --ssh-flag="-o StrictHostKeyChecking=no"
       - name: Verify deployment
         run: |
           sleep 30
           INSTANCE_NAME=${{ steps.vm_details.outputs.instance_name }}
           ZONE=${{ steps.vm_details.outputs.zone }}
           
-          if gcloud compute ssh marcellus@${INSTANCE_NAME} --zone=${ZONE} --command="curl -f http://localhost/health"; then
-            echo "Sync service deployed successfully with blue-green deployment"
-          else
-            echo "Health check failed"
-            exit 1
-          fi
-
+          echo "Verifying deployment on ${INSTANCE_NAME}"
+          for i in {1..5}; do
+            if gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="curl -f -s http://localhost:8080/health" --ssh-flag="-o StrictHostKeyChecking=no"; then
+              echo "Deployment verification successful"
+              exit 0
+            fi
+            echo "Verification attempt $i failed, waiting 10 seconds..."
+            sleep 10
+          done
+          echo "Health check failed after 5 attempts!"
+          exit 1
       - name: Rollback on failure
         if: failure()
         run: |
-          cd infrastructure/ansible
-          ansible-playbook -i inventory/dynamic.yml playbooks/rollback.yml --limit websocket_servers
-          echo "Deployment failed, rolled back to previous version"
-
-  # Job 4: Update Infrastructure (if needed)
-  update_infrastructure:
-    name: Update Infrastructure
-    needs: [deploy_api, deploy_websocket_ansible]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.5.0
-
-      - name: Update Terraform with new image URLs
-        run: |
-          cd infrastructure/terraform/gcp
-          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
-          cat > terraform.tfvars << EOF
-          gcp_project_id = "${PROJECT_ID}"
-          gcp_region     = "${{ env.GCP_REGION }}"
-          api_image_url  = "${{ needs.build_and_push_images.outputs.api_image_tag }}"
-          sync_image_url = "${{ needs.build_and_push_images.outputs.sync_image_tag }}"
-          EOF
-
-      - name: Terraform Plan
-        run: |
-          cd infrastructure/terraform/gcp
-          terraform init
-          terraform plan -out=tfplan
-
-      - name: Terraform Apply
-        run: |
-          cd infrastructure/terraform/gcp
-          terraform apply tfplan
+          INSTANCE_NAME=${{ steps.vm_details.outputs.instance_name }}
+          ZONE=${{ steps.vm_details.outputs.zone }}
+          
+          echo "Rolling back deployment on ${INSTANCE_NAME}"
+          gcloud compute ssh ${INSTANCE_NAME} --zone=${ZONE} --command="
+            # Stop current failed deployment
+            docker stop watch-party-sync-current || true
+            docker rm watch-party-sync-current || true
+            
+            # Find the previous image (second most recent)
+            PREV_IMAGE=\$(docker images --format 'table {{.Repository}}:{{.Tag}}' | grep service-sync | head -2 | tail -1 | awk '{print \$1\":\"\$2}')
+            if [ ! -z \"\${PREV_IMAGE}\" ] && [ \"\${PREV_IMAGE}\" != \"REPOSITORY:TAG\" ]; then
+              echo \"Rolling back to: \${PREV_IMAGE}\"
+              docker run -d \\
+                --name watch-party-sync-current \\
+                --restart unless-stopped \\
+                -p 8080:8080 \\
+                -e ENVIRONMENT=production \\
+                \${PREV_IMAGE}
+              
+              # Wait and verify rollback
+              sleep 15
+              if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then
+                echo \"Rollback successful\"
+              else
+                echo \"Rollback health check failed\"
+              fi
+            else
+              echo \"No previous image found for rollback\"
+            fi
+          " --ssh-flag="-o StrictHostKeyChecking=no"

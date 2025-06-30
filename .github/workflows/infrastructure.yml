@@ -17,13 +17,35 @@ on:
         required: false
         default: false
         type: boolean
+      api_image_tag:
+        description: 'API image URL to use (optional - will use latest available if not specified)'
+        required: false
+        type: string
+      sync_image_tag:
+        description: 'Sync service image URL to use (optional - will use latest available if not specified)'
+        required: false
+        type: string
 
-  push:
-    paths:
-      - 'infrastructure/terraform/**'
-      - '.github/workflows/infrastructure.yml'
-    branches:
-      - main
+  workflow_call:
+    inputs:
+      terraform_action:
+        description: 'Terraform action to perform'
+        required: false
+        default: 'apply'
+        type: string
+      auto_approve:
+        description: 'Auto-approve Terraform apply/destroy'
+        required: false
+        default: true
+        type: boolean
+      api_image_tag:
+        description: 'API image URL to use'
+        required: false
+        type: string
+      sync_image_tag:
+        description: 'Sync service image URL to use'
+        required: false
+        type: string
 
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -31,7 +53,7 @@ env:
 
 jobs:
   terraform:
-    name: Terraform ${{ github.event.inputs.terraform_action || 'plan' }}
+    name: Terraform ${{ inputs.terraform_action || github.event.inputs.terraform_action || 'plan' }}
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
@@ -60,34 +82,61 @@ jobs:
         run: |
           cd infrastructure/terraform/gcp
           
-          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
+          PROJECT_ID=$(gcloud config get-value project)
           DOCKER_REPO="asia-southeast1-docker.pkg.dev/${PROJECT_ID}/app-services"
           
           terraform init
           
-          if terraform state list | grep -q "google_cloud_run_v2_service.api"; then
-            API_IMAGE=$(terraform state show google_cloud_run_v2_service.api | grep 'image' | head -1 | awk '{print $3}' | tr -d '"')
-            echo "api_image_url=${API_IMAGE}" >> $GITHUB_OUTPUT
+          # Use provided image tags if available
+          if [ -n "${{ inputs.api_image_tag }}" ]; then
+            API_IMAGE="${{ inputs.api_image_tag }}"
+            echo "Using provided API image: ${{ inputs.api_image_tag }}"
           else
-            echo "api_image_url=${DOCKER_REPO}/service-api:latest" >> $GITHUB_OUTPUT
+            # Try to get from current Terraform state, fallback to default
+            if terraform state list | grep -q "google_cloud_run_v2_service.api"; then
+              API_IMAGE=$(terraform state show google_cloud_run_v2_service.api | grep 'image' | head -1 | awk '{print $3}' | tr -d '"')
+              echo "Using current API image from state: ${API_IMAGE}"
+            else
+              # Use default - will use the default from variables.tf
+              API_IMAGE=""
+              echo "No API image specified, will use default from Terraform variables"
+            fi
           fi
+          echo "api_image_url=${API_IMAGE}" >> $GITHUB_OUTPUT
           
-          if terraform state list | grep -q "google_compute_instance_template.sync_template"; then
-            echo "sync_image_url=${DOCKER_REPO}/service-sync:latest" >> $GITHUB_OUTPUT
+          # Same logic for sync service
+          if [ -n "${{ inputs.sync_image_tag }}" ]; then
+            SYNC_IMAGE="${{ inputs.sync_image_tag }}"
+            echo "Using provided Sync image: ${{ inputs.sync_image_tag }}"
           else
-            echo "sync_image_url=${DOCKER_REPO}/service-sync:latest" >> $GITHUB_OUTPUT
+            if terraform state list | grep -q "google_cloud_run_v2_service.sync"; then
+              SYNC_IMAGE=$(terraform state show google_cloud_run_v2_service.sync | grep 'image' | head -1 | awk '{print $3}' | tr -d '"')
+              echo "Using current Sync image from state: ${SYNC_IMAGE}"
+            else
+              # Use default - will use the default from variables.tf  
+              SYNC_IMAGE=""
+              echo "No Sync image specified, will use default from Terraform variables"
+            fi
           fi
+          echo "sync_image_url=${SYNC_IMAGE}" >> $GITHUB_OUTPUT
 
       - name: Create terraform.tfvars
         run: |
           cd infrastructure/terraform/gcp
-          PROJECT_ID=$(echo "${{ secrets.GCP_PROJECT_ID }}" | tr -d '[:space:]')
+          PROJECT_ID=$(gcloud config get-value project)
           cat > terraform.tfvars << EOF
           gcp_project_id = "${PROJECT_ID}"
           gcp_region     = "${{ env.GCP_REGION }}"
-          api_image_url  = "${{ steps.current_images.outputs.api_image_url }}"
-          sync_image_url = "${{ steps.current_images.outputs.sync_image_url }}"
           EOF
+          
+          # Only add image URLs if they are specified
+          if [ -n "${{ steps.current_images.outputs.api_image_url }}" ]; then
+            echo 'api_image_url  = "${{ steps.current_images.outputs.api_image_url }}"' >> terraform.tfvars
+          fi
+          
+          if [ -n "${{ steps.current_images.outputs.sync_image_url }}" ]; then
+            echo 'sync_image_url = "${{ steps.current_images.outputs.sync_image_url }}"' >> terraform.tfvars
+          fi
 
       - name: Terraform Format Check
         run: |
@@ -133,23 +182,23 @@ jobs:
 
       - name: Terraform Apply
         if: |
-          (github.event.inputs.terraform_action == 'apply' || 
-           (github.event_name == 'push' && steps.plan.outputs.exitcode == '2')) &&
-          (github.event.inputs.auto_approve == 'true' || github.event_name == 'push')
+          (inputs.terraform_action == 'apply' || 
+           (github.event_name == 'workflow_call' && (inputs.terraform_action == 'apply' || inputs.terraform_action == ''))) &&
+          (inputs.auto_approve == 'true' || inputs.auto_approve == true || github.event_name == 'workflow_call')
         run: |
           cd infrastructure/terraform/gcp
           terraform apply -auto-approve tfplan
 
       - name: Terraform Destroy
-        if: github.event.inputs.terraform_action == 'destroy' && github.event.inputs.auto_approve == 'true'
+        if: inputs.terraform_action == 'destroy' && (inputs.auto_approve == 'true' || inputs.auto_approve == true)
         run: |
           cd infrastructure/terraform/gcp
           terraform destroy -auto-approve
 
       - name: Get deployment outputs (if applied)
         if: |
-          (github.event.inputs.terraform_action == 'apply' || github.event_name == 'push') &&
-          (github.event.inputs.auto_approve == 'true' || github.event_name == 'push')
+          (inputs.terraform_action == 'apply' || github.event_name == 'workflow_call') &&
+          (inputs.auto_approve == 'true' || inputs.auto_approve == true || github.event_name == 'workflow_call')
         id: terraform_outputs
         run: |
           cd infrastructure/terraform/gcp
@@ -159,8 +208,8 @@ jobs:
 
       - name: Manual approval required notice
         if: |
-          (github.event.inputs.terraform_action == 'apply' || github.event.inputs.terraform_action == 'destroy') &&
-          github.event.inputs.auto_approve != 'true'
+          (inputs.terraform_action == 'apply' || inputs.terraform_action == 'destroy') &&
+          inputs.auto_approve != 'true' && inputs.auto_approve != true && github.event_name != 'workflow_call'
         run: |
           echo "## Manual Approval Required" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

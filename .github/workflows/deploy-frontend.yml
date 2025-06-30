@@ -37,7 +37,8 @@ jobs:
       - name: Build frontend
         env:
           VITE_API_URL: https://service-api-909156263178.asia-southeast1.run.app
-          VITE_WS_URL: ws://35.240.143.13:8080
+          VITE_WS_URL: wss://35.240.143.13
+          VITE_MODE: production-selfhost
           NODE_ENV: production
         run: npm run build
         working-directory: ./frontend

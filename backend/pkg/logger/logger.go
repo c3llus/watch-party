@@ -1,12 +1,10 @@
 package logger
 
 import (
-	"io"
 	"os"
 	"watch-party/pkg/config"
 
 	zl "github.com/rs/zerolog"
-	zll "github.com/rs/zerolog/log"
 )
 
 // log is a unexported package-level global variable that holds julo-go-library logger instance
@@ -26,13 +24,8 @@ func InitLogger(cfg *config.Config) {
 	opts := options{}
 
 	zl.SetGlobalLevel(logLvl)
-
-	var engine zl.Logger
-	if cfg.Log.Format == "json" {
-		engine = newJSONLogger(opts)
-	} else {
-		engine = newLogger(opts)
-	}
+	setupCloudLoggingSeverity()
+	engine := newGCPLogger(opts) // TODO: support other cloud prviders
 
 	log = &logger{
 		engine: &engine,
@@ -55,17 +48,39 @@ func getLogLevel(level string) zl.Level {
 	}
 }
 
-func newLogger(opts options) zl.Logger {
-	var wr []io.Writer
-	zll.Logger = zll.Output(zl.Logger{})
-
-	wr = append(wr, zl.ConsoleWriter{Out: os.Stdout})
-	mw := io.MultiWriter(wr...)
-
-	return zl.New(mw).With().Timestamp().Logger()
+// setupCloudLoggingSeverity configures zerolog to use Cloud Logging severity levels
+func setupCloudLoggingSeverity() {
+	zl.LevelFieldMarshalFunc = func(l zl.Level) string {
+		switch l {
+		case zl.DebugLevel:
+			return "DEBUG"
+		case zl.InfoLevel:
+			return "INFO"
+		case zl.WarnLevel:
+			return "WARNING"
+		case zl.ErrorLevel:
+			return "ERROR"
+		case zl.FatalLevel:
+			return "CRITICAL"
+		case zl.PanicLevel:
+			return "CRITICAL"
+		default:
+			return "DEFAULT"
+		}
+	}
 }
 
-// newJSONLogger creates a logger that outputs JSON format (better for cloud environments)
-func newJSONLogger(opts options) zl.Logger {
-	return zl.New(os.Stdout).With().Timestamp().Logger()
+// newGCPLogger creates a logger that outputs JSON format (better for cloud environments)
+func newGCPLogger(opts options) zl.Logger {
+	// for Google Cloud Loggin structured logging, we need to use specific field names
+	zl.TimeFieldFormat = zl.TimeFormatUnix
+	zl.TimestampFieldName = "timestamp"
+	zl.LevelFieldName = "severity"
+	zl.MessageFieldName = "message"
+
+	// Add caller information for better debugging in Cloud Logging
+	return zl.New(os.Stdout).With().
+		Timestamp().
+		Caller().
+		Logger()
 }

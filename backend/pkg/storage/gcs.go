@@ -2,32 +2,45 @@ package storage
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
+	"net/http"
 	"os"
 	"strings"
 	"time"
+	"watch-party/pkg/config"
 
 	"cloud.google.com/go/storage"
 )
 
 // GCSProvider implements storage for Google Cloud Storage
 type GCSProvider struct {
-	client *storage.Client
-	bucket string
+	client           *storage.Client
+	bucket           string
+	serviceAccountID string // service account email for signing URLs
+	privateKey       []byte // private key for signing URLs, if needed
 }
 
 // NewGCSProvider creates a new GCS storage provider
-func NewGCSProvider(ctx context.Context, bucketName string) (*GCSProvider, error) {
+func NewGCSProvider(ctx context.Context, cfg *config.StorageConfig) (*GCSProvider, error) {
 	client, err := storage.NewClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS client: %w", err)
 	}
 
+	privateKeyPEM, err := base64.StdEncoding.DecodeString(cfg.GCSPrivateKey)
+	if err != nil {
+		log.Fatalf("failed to decode base64 secret: %v", err)
+	}
+
 	return &GCSProvider{
-		client: client,
-		bucket: bucketName,
+		client:           client,
+		bucket:           cfg.GCSBucket,
+		serviceAccountID: cfg.GCSServiceAccountID,
+		privateKey:       privateKeyPEM,
 	}, nil
 }
 
@@ -100,16 +113,17 @@ func (g *GCSProvider) UploadFromPath(ctx context.Context, localPath, storagePath
 
 // GetSignedURL returns a signed URL for accessing the file
 func (g *GCSProvider) GetSignedURL(ctx context.Context, path string) (string, error) {
-	// generate a signed URL valid for 1 hour
 	opts := &storage.SignedURLOptions{
-		Scheme:  storage.SigningSchemeV4,
-		Method:  "GET",
-		Expires: time.Now().Add(time.Hour),
+		Scheme:         storage.SigningSchemeV4,
+		Method:         http.MethodGet,
+		Expires:        time.Now().Add(2 * time.Hour),
+		GoogleAccessID: g.serviceAccountID,
+		PrivateKey:     g.privateKey,
 	}
 
-	url, err := storage.SignedURL(g.bucket, path, opts)
+	url, err := g.client.Bucket(g.bucket).SignedURL(path, opts)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate signed URL: %w", err)
+		return "", fmt.Errorf("failed to generate GCS signed URL: %w", err)
 	}
 
 	return url, nil
@@ -134,9 +148,10 @@ func (g *GCSProvider) GenerateSignedUploadURL(ctx context.Context, filename stri
 	// Generate signed URL for PUT method
 	opts2 := &storage.SignedURLOptions{
 		Scheme:         storage.SigningSchemeV4,
-		Method:         "PUT",
+		Method:         http.MethodPut,
 		Expires:        time.Now().Add(opts.ExpiresIn),
-		GoogleAccessID: "", // This would need to be configured based on service account
+		GoogleAccessID: g.serviceAccountID,
+		PrivateKey:     g.privateKey,
 	}
 
 	// Set content type if provided
@@ -156,7 +171,7 @@ func (g *GCSProvider) GenerateSignedUploadURL(ctx context.Context, filename stri
 
 	return &SignedURL{
 		URL:       url,
-		Method:    "PUT",
+		Method:    http.MethodPut,
 		Headers:   headers,
 		ExpiresAt: time.Now().Add(opts.ExpiresIn),
 	}, nil
@@ -286,9 +301,11 @@ func (g *GCSProvider) GenerateCDNSignedURL(ctx context.Context, path string, opt
 
 	// Set up signed URL options
 	signOpts := &storage.SignedURLOptions{
-		Scheme:  storage.SigningSchemeV4,
-		Method:  "GET",
-		Expires: time.Now().Add(expiration),
+		Scheme:         storage.SigningSchemeV4,
+		Method:         http.MethodGet,
+		Expires:        time.Now().Add(expiration),
+		GoogleAccessID: g.serviceAccountID,
+		PrivateKey:     g.privateKey,
 	}
 
 	// Add response headers for CDN optimization
@@ -302,8 +319,8 @@ func (g *GCSProvider) GenerateCDNSignedURL(ctx context.Context, path string, opt
 		}
 	}
 
-	// Generate signed URL using storage.SignedURL function
-	signedURL, err := storage.SignedURL(g.bucket, path, signOpts)
+	// Generate signed URL using the client method
+	signedURL, err := g.client.Bucket(g.bucket).SignedURL(path, signOpts)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate signed URL: %w", err)
 	}
@@ -337,4 +354,45 @@ func (g *GCSProvider) GenerateSignedURLs(ctx context.Context, paths []string, op
 	}
 
 	return result, nil
+}
+
+// getServiceAccountID retrieves the service account email from environment or metadata
+func getServiceAccountID(ctx context.Context) string {
+	if serviceAccountID := os.Getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL"); serviceAccountID != "" {
+		return serviceAccountID
+	}
+
+	if serviceAccountID := os.Getenv("STORAGE_GCS_SERVICE_ACCOUNT_ID"); serviceAccountID != "" {
+		return serviceAccountID
+	}
+
+	return getServiceAccountFromMetadata()
+}
+
+// getServiceAccountFromMetadata retrieves the service account email from GCP metadata
+func getServiceAccountFromMetadata() string {
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest("GET", "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email", nil)
+	if err != nil {
+		return ""
+	}
+
+	req.Header.Add("Metadata-Flavor", "Google")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	serviceAccount, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(serviceAccount))
 }

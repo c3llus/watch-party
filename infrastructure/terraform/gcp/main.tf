@@ -31,6 +31,7 @@ resource "google_project_service" "apis" {
     "servicenetworking.googleapis.com",
     "vpcaccess.googleapis.com",
     "compute.googleapis.com",
+    "iam.googleapis.com",
   ])
   project                    = var.gcp_project_id
   service                    = each.key

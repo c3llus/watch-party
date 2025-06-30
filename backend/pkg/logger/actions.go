@@ -2,6 +2,7 @@ package logger
 
 import (
 	"fmt"
+	"os"
 
 	"watch-party/pkg/utils"
 )
@@ -45,28 +46,43 @@ func Warnf(template string, args ...interface{}) {
 // Error logs an error message with the line of code where the log is called
 func Error(err error, message string) {
 	if err != nil {
-		log.engine.Err(err).Str(lineOfCode, utils.GetFileAndLoC(1)).Msg(message)
+		log.engine.Err(err).
+			Str(lineOfCode, utils.GetFileAndLoC(1)).
+			Str("error.type", "application_error").
+			Msg(message)
 		return
 	}
 
-	log.engine.Error().Str(lineOfCode, utils.GetFileAndLoC(1)).Msg(message)
+	log.engine.Error().
+		Str(lineOfCode, utils.GetFileAndLoC(1)).
+		Str("error.type", "application_error").
+		Msg(message)
 }
 
 func Errorf(err error, template string, args ...interface{}) {
 	if err != nil {
-		log.engine.Err(err).Str(lineOfCode, utils.GetFileAndLoC(1)).Msg(
-			fmt.Sprintf(template, args...),
-		)
+		log.engine.Err(err).
+			Str(lineOfCode, utils.GetFileAndLoC(1)).
+			Str("error.type", "application_error").
+			Msg(fmt.Sprintf(template, args...))
 		return
 	}
 
-	log.engine.Error().Str(lineOfCode, utils.GetFileAndLoC(1)).Msg(
-		fmt.Sprintf(template, args...),
-	)
+	log.engine.Error().
+		Str(lineOfCode, utils.GetFileAndLoC(1)).
+		Str("error.type", "application_error").
+		Msg(fmt.Sprintf(template, args...))
 }
 
 func Fatalf(template string, args ...interface{}) {
 	log.engine.Fatal().Str(lineOfCode, utils.GetFileAndLoC(1)).Msg(
 		fmt.Sprintf(template, args...),
 	)
+}
+
+// Flush ensures all log entries are written to the output
+func Flush() {
+	if log != nil && log.engine != nil {
+		os.Stdout.Sync()
+	}
 }

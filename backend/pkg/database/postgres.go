@@ -27,6 +27,7 @@ func newPgDB(
 
 	db.SetMaxOpenConns(cfg.Database.MaxOpenConns)
 	db.SetMaxIdleConns(cfg.Database.MaxIdleConns)
+	db.SetConnMaxLifetime(cfg.Database.ConnMaxLifetime.ToDuration())
 
 	// ping db to ensure the connection is alive and working
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)

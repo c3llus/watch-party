@@ -19,7 +19,7 @@ func NewStorageProvider(ctx context.Context, cfg *config.StorageConfig) (Provide
 		if cfg.GCSBucket == "" {
 			return nil, fmt.Errorf("GCS bucket name is required")
 		}
-		return NewGCSProvider(ctx, cfg.GCSBucket)
+		return NewGCSProvider(ctx, cfg)
 
 	case StorageProviderMinIO:
 		if cfg.MinIO.Endpoint == "" {

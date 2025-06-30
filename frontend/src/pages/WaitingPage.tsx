@@ -28,7 +28,7 @@ export default function WaitingPage() {
       return
     }
 
-    let pollInterval: number
+    let pollInterval: ReturnType<typeof setInterval> | undefined
 
     const pollRequestStatus = async () => {
       try {

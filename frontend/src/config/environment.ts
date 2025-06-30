@@ -39,7 +39,7 @@ function getEnvironmentConfig(): EnvironmentConfig {
       
       return {
         apiUrl: `${protocol}//${hostname}:8080`,
-        wsUrl: `${wsProtocol}//${hostname}:8081`,
+        wsUrl: `${wsProtocol}//${hostname}:8080`, 
         mode: 'production-selfhost'
       }
     }

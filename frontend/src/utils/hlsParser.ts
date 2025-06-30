@@ -87,6 +87,13 @@ import { apiClient } from '../services/apiClient'
 
 // Fetch with auth headers and handle signed URLs
 export async function fetchWithAuth(url: string, token?: string): Promise<Response> {
+  // Check if this is a signed GCS URL - these don't need credentials
+  if (url.includes('storage.googleapis.com') && url.includes('X-Goog-Signature')) {
+    console.log('fetchWithAuth: detected signed GCS URL, skipping credentials for:', url.substring(0, 100) + '...');
+    return fetch(url); // No credentials needed for signed URLs
+  }
+  
+  console.log('fetchWithAuth: using credentials for:', url.substring(0, 100) + '...');
   return fetch(url, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     credentials: 'include',
