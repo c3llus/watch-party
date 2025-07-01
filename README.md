@@ -34,54 +34,7 @@ watch-party/
 
 This approach scales from "running on my laptop" to "production infrastructure" without restructuring your entire development workflow.
 
-## Quick Start Options
-
-### Option 1: Standalone Executable
-Download and run the self-contained executable - includes everything embedded:
-```bash
-# Download for your platform
-wget https://releases.example.com/watch-party-standalone-linux
-chmod +x watch-party-standalone-linux
-./watch-party-standalone-linux
-
-# Open http://localhost:3000
-```
-
-### Option 2: Development Setup
-
-#### Fully Containerized
-TBA
-
-#### Hybrid Approach
-
-For this approach, ensure you have the following installed:
-- Docker
-- Go (version 1.24 or higher)
-- Node.js and npm (with React and Vite)
-
-```bash
-git clone <repo-url>
-cd watch-party
-
-# Start backend services
-cd backend && docker-compose up -d # This starts PostgreSQL, Redis, and MinIO
-cd service-api && go run cmd/main.go
-cd ../service-sync && go run cmd/main.go
-
-# Start frontend
-cd ../frontend && npm install && npm run dev
-```
-
-### Option 3: Production Deployment
-```bash
-cd infrastructure/terraform
-terraform init
-terraform plan
-terraform apply
-# See infrastructure/README.md for detailed setup
-```
-
-## Core Features
+# Core Features
 
 ### Real-Time Video Synchronization
 Every play, pause, and seek action is instantly synchronized across all participants. Built on WebSocket connections with smart conflict resolution and automatic recovery from network hiccups.
@@ -149,25 +102,6 @@ The architecture is designed for multi-tenancy (though not implemented yet). The
 - **...**
 
 The beauty of this approach: customers can start self-hosted and migrate to SaaS later, or run hybrid deployments. No lock-in, just convenience.
-
-## Getting Started
-
-### Development Environment
-1. **Prerequisites**: Docker, Go 1.24+ (opt), Node.js 18+ (opt)
-2. **Database**: `docker-compose up -d postgres redis minio`
-3. **Backend**: Start both services in separate terminals
-4. **Frontend**: `npm run dev` in the frontend directory
-5. **Test**: Create a room, open multiple browser tabs, test sync
-
-### Building for Production
-```bash
-# Build standalone executable
-cd backend/standalone && ./build.sh
-
-# Build for containerized deployment
-docker build -t watch-party-api ./backend/service-api
-docker build -t watch-party-sync ./backend/service-sync
-```
 
 ## Documentation
 
