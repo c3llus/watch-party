@@ -1,0 +1,162 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (semantic)'
+        required: true
+        type: string
+      branch:
+        description: 'Branch to release from'
+        required: true
+        default: 'main'
+        type: string
+      release_title:
+        description: 'Release title (opt - defaults to "Watch Party {tag}")'
+        required: false
+        type: string
+      release_notes:
+        description: 'Release notes/changelog (markdown support)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0 
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.4'
+          cache-dependency-path: backend/go.sum
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ./frontend
+        run: npm run build
+
+      - name: Copy frontend to standalone directory
+        run: |
+          rm -rf backend/standalone/frontend-dist
+          cp -r frontend/dist backend/standalone/frontend-dist
+
+      - name: Install Go dependencies
+        working-directory: ./backend
+        run: go mod tidy
+
+      - name: Build Linux AMD64
+        working-directory: ./backend
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: go build -ldflags="-s -w" -o standalone/watch-party-standalone-linux-amd64 ./standalone/
+
+      - name: Build Windows AMD64
+        working-directory: ./backend
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: go build -ldflags="-s -w" -o standalone/watch-party-standalone-windows-amd64.exe ./standalone/
+
+      - name: Build macOS AMD64
+        working-directory: ./backend
+        env:
+          GOOS: darwin
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: go build -ldflags="-s -w" -o standalone/watch-party-standalone-macos-amd64 ./standalone/
+
+      - name: Build macOS ARM64
+        working-directory: ./backend
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: go build -ldflags="-s -w" -o standalone/watch-party-standalone-macos-arm64 ./standalone/
+
+      - name: Prepare release notes
+        id: release_notes
+        run: |
+          echo "${{ inputs.release_notes }}" > RELEASE_NOTES.md
+          
+          echo "" >> RELEASE_NOTES.md
+          echo "## Downloads" >> RELEASE_NOTES.md
+          echo "Choose the appropriate binary for your platform:" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          echo "- **Linux AMD64**: \`watch-party-standalone-linux-amd64\`" >> RELEASE_NOTES.md
+          echo "- **Windows AMD64**: \`watch-party-standalone-windows-amd64.exe\`" >> RELEASE_NOTES.md
+          echo "- **macOS Intel**: \`watch-party-standalone-macos-amd64\`" >> RELEASE_NOTES.md
+          echo "- **macOS Apple Silicon**: \`watch-party-standalone-macos-arm64\`" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          echo "## Quick Start" >> RELEASE_NOTES.md
+          echo "1. Download the binary for your platform" >> RELEASE_NOTES.md
+          echo "2. Make it executable (Linux/macOS): \`chmod +x watch-party-standalone-*\`" >> RELEASE_NOTES.md
+          echo "3. Run: \`./watch-party-standalone-*\`" >> RELEASE_NOTES.md
+          echo "4. Open your browser to: http://localhost:3000" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          echo "## What's Included" >> RELEASE_NOTES.md
+          echo "- Embedded PostgreSQL database" >> RELEASE_NOTES.md
+          echo "- Embedded Redis cache" >> RELEASE_NOTES.md
+          echo "- Embedded MinIO storage" >> RELEASE_NOTES.md
+          echo "- React frontend" >> RELEASE_NOTES.md
+          echo "- API and Sync services" >> RELEASE_NOTES.md
+          echo "- Zero-configuration setup" >> RELEASE_NOTES.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.release_title || format('Watch Party {0}', inputs.tag) }}
+          body_path: RELEASE_NOTES.md
+          prerelease: ${{ inputs.prerelease }}
+          files: |
+            backend/standalone/watch-party-standalone-linux-amd64
+            backend/standalone/watch-party-standalone-windows-amd64.exe
+            backend/standalone/watch-party-standalone-macos-amd64
+            backend/standalone/watch-party-standalone-macos-arm64
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Display build info
+        run: |
+          echo "Release ${{ inputs.tag }} created successfully!"
+          echo ""
+          echo "Built binaries:"
+          ls -la backend/standalone/watch-party-standalone-*
+          echo ""
+          echo "Binary sizes:"
+          cd backend/standalone
+          for binary in watch-party-standalone-*; do
+            if [ -f "$binary" ]; then
+              size=$(du -h "$binary" | cut -f1)
+              echo "   $binary: $size"
+            fi
+          done
