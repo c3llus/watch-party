@@ -1,0 +1,48 @@
+graph TD
+    subgraph "Admin Journey"
+        A1[Admin User Creation<br/>Direct DB/Backend] --> A2[Admin Login<br/>LoginPage]
+        A2 --> A3[Admin Dashboard<br/>AdminDashboardPage]
+        A3 --> A4[Upload Movie<br/>UploadPage]
+        A4 --> A5[Movie Processing<br/>Background HLS Transcoding]
+        A5 --> A6[Movie Available<br/>Back to Admin Dashboard]
+        A6 --> A7[Create Room<br/>RoomCreatePage]
+        A7 --> A8[Room Success<br/>RoomSuccessPage]
+        A8 --> A9[Share Room Link<br/>Email Invitations]
+        A9 --> A10[Host Watch Party<br/>RoomPage]
+        A10 --> A11[Manage Guest Requests<br/>Approve/Deny in RoomPage]
+        A11 --> A12[Control Video Playback<br/>Real-time Sync]
+    end
+
+    subgraph "Regular User Journey"
+        U1[User Registration<br/>SignupPage] --> U2[User Login<br/>LoginPage]
+        U2 --> U3[User Dashboard<br/>UserDashboardPage]
+        U3 --> U4[Receive Room Invitation<br/>Email Link]
+        U4 --> U5[Join Room<br/>RoomJoinPage]
+        U5 --> U6[Direct Room Access<br/>RoomPage]
+        U6 --> U7[Watch Party<br/>Synchronized Playback]
+        U7 --> U8[Live Chat<br/>Real-time Messaging]
+        
+        U3 --> U9[Movie Library<br/>MovieLibraryPage]
+        U9 --> U10[Create Own Room<br/>RoomCreatePage]
+        U10 --> U11[Room Success<br/>RoomSuccessPage]
+        U11 --> U12[Host Watch Party<br/>RoomPage]
+    end
+
+    subgraph "Guest User Journey"
+        G1[Guest Landing<br/>GuestLandingPage] --> G2[Receive Room Link<br/>From Host/User]
+        G2 --> G3[Join Room Link<br/>RoomJoinPage]
+        G3 --> G4[Guest Request Form<br/>GuestRequestPage]
+        G4 --> G5[Waiting for Approval<br/>WaitingPage]
+        G5 --> G6{Request Status}
+        G6 -->|Approved| G7[Join Watch Party<br/>RoomPage]
+        G6 -->|Denied| G8[Access Denied<br/>Back to Landing]
+        G7 --> G9[Watch Party<br/>Guest Participation]
+        G9 --> G10[Live Chat<br/>Guest Messaging]
+        
+        G11[Direct Room Link<br/>From External Source] --> G3
+    end
+
+    A9 -.-> U4
+    A9 -.-> G2
+    A11 -.-> G5
+    U11 -.-> G2

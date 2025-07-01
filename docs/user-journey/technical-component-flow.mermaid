@@ -1,0 +1,108 @@
+graph TD
+    subgraph "Frontend Pages & Components"
+        subgraph "Authentication Layer"
+            LOGIN[LoginPage.tsx<br/>JWT Authentication]
+            SIGNUP[SignupPage.tsx<br/>Self Registration]
+            AUTH_SERVICE[authService.ts<br/>Token Management]
+        end
+        
+        subgraph "Admin Interface"
+            ADMIN_DASH[AdminDashboardPage.tsx<br/>Content Management]
+            UPLOAD[UploadPage.tsx<br/>Video Upload Hook]
+            MOVIE_SERVICE[movieService.ts<br/>Upload API]
+        end
+        
+        subgraph "User Interface"
+            USER_DASH[UserDashboardPage.tsx<br/>Personal Hub]
+            MOVIE_LIB[MovieLibraryPage.tsx<br/>Content Browser]
+        end
+        
+        subgraph "Room Management"
+            ROOM_CREATE[RoomCreatePage.tsx<br/>Room Setup]
+            ROOM_SUCCESS[RoomSuccessPage.tsx<br/>Invitation Hub]
+            ROOM_SERVICE[roomService.ts<br/>Room API]
+        end
+        
+        subgraph "Guest Flow"
+            GUEST_LANDING[GuestLandingPage.tsx<br/>Entry Point]
+            GUEST_REQUEST[GuestRequestPage.tsx<br/>Access Form]
+            WAITING[WaitingPage.tsx<br/>Status Polling]
+        end
+        
+        subgraph "Watch Party Core"
+            ROOM_JOIN[RoomJoinPage.tsx<br/>Access Validation]
+            ROOM_PAGE[RoomPage.tsx<br/>Video Player + Chat]
+            ROOM_HOOK[useRoom.ts<br/>WebSocket Integration]
+            VIDEO_COMP[VideoPlayer.tsx<br/>HLS Playback]
+            CHAT_COMP[ChatComponent.tsx<br/>Real-time Messaging]
+        end
+    end
+    
+    subgraph "Backend Services"
+        subgraph "API Service"
+            AUTH_API[Auth Endpoints<br/>Login/Register/JWT]
+            MOVIE_API[Movie Endpoints<br/>Upload/List/Process]
+            ROOM_API[Room Endpoints<br/>Create/Join/Invite]
+            GUEST_API[Guest Endpoints<br/>Request/Approve]
+        end
+        
+        subgraph "Sync Service"
+            WS_SERVER[WebSocket Server<br/>Real-time Communication]
+            SYNC_LOGIC[Sync Logic<br/>Video State Management]
+            CHAT_LOGIC[Chat Logic<br/>Message Broadcasting]
+        end
+        
+        subgraph "Storage & Processing"
+            VIDEO_STORAGE[MinIO/GCS<br/>Video Storage]
+            HLS_PROCESSOR[HLS Transcoder<br/>Background Processing]
+            CDN[Cloudflare CDN<br/>Video Delivery]
+        end
+        
+        subgraph "Data Layer"
+            POSTGRES[PostgreSQL<br/>Users/Rooms/Movies]
+            REDIS[Redis<br/>Sessions/Cache/PubSub]
+        end
+    end
+    
+    AUTH_SERVICE --> AUTH_API
+    MOVIE_SERVICE --> MOVIE_API
+    ROOM_SERVICE --> ROOM_API
+    ROOM_HOOK --> WS_SERVER
+    VIDEO_COMP --> CDN
+    
+    AUTH_API --> POSTGRES
+    MOVIE_API --> VIDEO_STORAGE
+    ROOM_API --> POSTGRES
+    GUEST_API --> POSTGRES
+    WS_SERVER --> REDIS
+    SYNC_LOGIC --> REDIS
+    CHAT_LOGIC --> REDIS
+    HLS_PROCESSOR --> VIDEO_STORAGE
+    VIDEO_STORAGE --> CDN
+    
+    LOGIN --> AUTH_SERVICE
+    SIGNUP --> AUTH_SERVICE
+    ADMIN_DASH --> UPLOAD
+    UPLOAD --> MOVIE_SERVICE
+    USER_DASH --> MOVIE_LIB
+    ROOM_CREATE --> ROOM_SERVICE
+    ROOM_SUCCESS --> ROOM_SERVICE
+    GUEST_REQUEST --> GUEST_API
+    WAITING --> GUEST_API
+    ROOM_JOIN --> ROOM_SERVICE
+    ROOM_PAGE --> ROOM_HOOK
+    ROOM_PAGE --> VIDEO_COMP
+    ROOM_PAGE --> CHAT_COMP
+    
+    GUEST_LANDING --> GUEST_REQUEST
+    GUEST_REQUEST --> WAITING
+    WAITING --> ROOM_JOIN
+    
+    LOGIN --> ADMIN_DASH
+    LOGIN --> USER_DASH
+    ADMIN_DASH --> ROOM_CREATE
+    USER_DASH --> ROOM_CREATE
+    ROOM_CREATE --> ROOM_SUCCESS
+    ROOM_SUCCESS --> ROOM_PAGE
+    ROOM_JOIN --> ROOM_PAGE
+    

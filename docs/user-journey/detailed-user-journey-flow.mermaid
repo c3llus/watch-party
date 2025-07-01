@@ -1,0 +1,62 @@
+graph TD
+    subgraph "1. Admin Setup & Content Management"
+        A1[Admin User Creation<br/>Direct Database Insert<br/>Backend Bootstrap Process] --> A2[Admin Login<br/>LoginPage<br/>JWT Authentication]
+        A2 --> A3[Admin Dashboard<br/>AdminDashboardPage<br/>Movie Management Hub]
+        A3 --> A4[Upload Movie<br/>UploadPage<br/>Direct Storage Upload]
+        A4 --> A5[Video Processing<br/>Background HLS Transcoding<br/>MinIO/GCS Storage]
+        A5 --> A6[Movie Available<br/>AdminDashboardPage<br/>Ready for Rooms]
+    end
+
+    subgraph "2. Admin Room Creation & Hosting"
+        A6 --> A7[Create Room<br/>RoomCreatePage<br/>Select Movie + Settings]
+        A7 --> A8[Room Success<br/>RoomSuccessPage<br/>Share Links & Invitations]
+        A8 --> A9[Send Invitations<br/>Email Service<br/>Persistent Room Links]
+        A9 --> A10[Host Watch Party<br/>RoomPage<br/>Video Player + Controls]
+        A10 --> A11[Manage Guests<br/>Guest Approval Interface<br/>Real-time Notifications]
+        A11 --> A12[Control Playback<br/>Sync Video Actions<br/>WebSocket Broadcasting]
+    end
+
+    subgraph "3. Regular User Registration & Access"
+        U1[User Registration<br/>SignupPage<br/>Self-Service Signup] --> U2[User Login<br/>LoginPage<br/>JWT Authentication]
+        U2 --> U3[User Dashboard<br/>UserDashboardPage<br/>Room Management]
+    end
+
+    subgraph "4. User Room Participation"
+        U3 --> U4[Receive Invitation<br/>Email Link<br/>Persistent Access Grant]
+        U4 --> U5[Join Room<br/>RoomJoinPage<br/>Access Validation]
+        U5 --> U6[Direct Access<br/>RoomPage<br/>Immediate Entry]
+        U6 --> U7[Watch Party<br/>Synchronized Playback<br/>Real-time Sync]
+        U7 --> U8[Live Chat<br/>Real-time Messaging<br/>WebSocket Communication]
+    end
+
+    subgraph "5. User as Host (Alternative Path)"
+        U3 --> U9[Browse Movies<br/>MovieLibraryPage<br/>Available Content]
+        U9 --> U10[Create Room<br/>RoomCreatePage<br/>Host Own Party]
+        U10 --> U11[Room Success<br/>RoomSuccessPage<br/>Invitation Management]
+        U11 --> U12[Host Party<br/>RoomPage<br/>Control & Manage]
+    end
+
+    subgraph "6. Guest Discovery & Entry"
+        G1[Guest Landing<br/>GuestLandingPage<br/>No Account Required] --> G2[Receive Room Link<br/>External Share<br/>Host/User Generated]
+        G2 --> G3[Access Room Link<br/>RoomJoinPage<br/>Guest Detection]
+        G3 --> G4[Request Access<br/>GuestRequestPage<br/>Name + Message Form]
+        G4 --> G5[Wait for Approval<br/>WaitingPage<br/>Real-time Status Polling]
+    end
+
+    subgraph "7. Guest Approval & Participation"
+        G5 --> G6{Host Decision<br/>Admin/User Choice}
+        G6 -->|Approved| G7[Join Watch Party<br/>RoomPage<br/>Guest Token Access]
+        G6 -->|Denied| G8[Access Denied<br/>Back to Landing<br/>Try Different Room]
+        G7 --> G9[Watch Content<br/>Synchronized Viewing<br/>Guest Participation]
+        G9 --> G10[Chat Participation<br/>Guest Messaging<br/>Real-time Interaction]
+    end
+
+    subgraph "8. Alternative Guest Entry"
+        G11[Direct Room Link<br/>Shared URL<br/>Social/Direct Share] --> G3
+    end
+
+    A9 -.->|Email Invites| U4
+    A9 -.->|Share Links| G2
+    A11 -.->|Approval/Denial| G5
+    U11 -.->|User-hosted Room| G2
+    G8 -.->|Try Again| G1

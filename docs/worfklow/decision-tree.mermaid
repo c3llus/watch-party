@@ -1,0 +1,38 @@
+```mermaid
+flowchart TD
+    A[Deployment Need] --> B{What type of change?}
+    
+    B -->|Code Changes| C{Frontend or Backend?}
+    B -->|Infrastructure| D{New resources or updates?}
+    B -->|Emergency| E{Production down?}
+    B -->|Release| F[Create Release Build]
+    
+    C -->|Frontend Only| G[Automatic via deploy-frontend.yml]
+    C -->|Backend Only| H[Automatic via deploy-ansible.yml] 
+    C -->|Both| I[Push changes separately<br/>Both workflows trigger]
+    
+    D -->|New Resources| J[Use infrastructure.yml<br/>Plan → Review → Apply]
+    D -->|Resource Updates| K[Use infrastructure.yml<br/>Update variables]
+    D -->|Terraform Changes| L[Use infrastructure.yml<br/>Test plan first]
+    
+    E -->|Yes - Critical| M[Use manual-deploy.yml<br/>Force rebuild if needed]
+    E -->|No - Planned| N[Use regular workflows]
+    
+    F --> O[Use manual-release.yml<br/>Create GitHub release]
+    
+    G --> G1[✅ CDN Updated<br/>Global distribution]
+    H --> H1[✅ Services Updated<br/>API + WebSocket]
+    I --> I1[✅ Full Stack Updated<br/>Frontend + Backend]
+    
+    J --> J1[✅ Infrastructure Created<br/>New GCP resources]
+    K --> K1[✅ Infrastructure Updated<br/>Modified resources]
+    L --> L1[✅ Terraform Applied<br/>Infrastructure changes]
+    
+    M --> M1{Deployment successful?}
+    M1 -->|Yes| M2[✅ Emergency Fixed<br/>Monitor closely]
+    M1 -->|No| M3[🚨 Rollback immediately<br/>Use previous image]
+    
+    N --> N1[Use appropriate workflow<br/>Based on change type]
+    
+    O --> O1[✅ Release Published<br/>Binaries available]
+```

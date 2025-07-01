@@ -13,7 +13,7 @@ sequenceDiagram
     %% 2. Get Master Playlist Signed URL
     Note over F,B: Step 1: Get Master Playlist Access
     F->>B: GET /api/v1/videos/{movieId}/hls (JWT/Guest Token)
-    Note right of B: - Validate JWT or Guest Token<br/>- Check user/guest has access to movie<br/>- Generate signed URL for master.m3u8
+    Note right of B: Validate JWT or Guest Token, Check user/guest has access to movie, Generate signed URL for master.m3u8
     B->>S: Generate signed URL for hls/{movieId}/master.m3u8
     S-->>B: Signed URL (expires in 2 hours)
     B-->>F: {hls_url: "https://storage.com/hls/movieId/master.m3u8?signature=..."}
@@ -22,13 +22,13 @@ sequenceDiagram
     Note over F,S: Step 2: Fetch Master Playlist (Direct to Storage)
     F->>S: GET master.m3u8 (via signed URL)
     Note right of S: No auth needed - URL contains signature
-    S-->>F: Master playlist content<br/>#EXTM3U<br/>#EXT-X-STREAM-INF:BANDWIDTH=800000<br/>1080p.m3u8<br/>#EXT-X-STREAM-INF:BANDWIDTH=400000<br/>720p.m3u8
+    S-->>F: Master playlist content
 
     %% 4. Get Quality Playlist Signed URL
     Note over F,B: Step 3: Get Quality Playlist Access
     F->>B: POST /api/v1/videos/{movieId}/urls (JWT/Guest Token)
     Note right of F: Body: {files: ["1080p.m3u8"]}
-    Note right of B: - Validate JWT or Guest Token<br/>- Check user/guest has access to movie<br/>- Generate signed URL for quality playlist
+    Note right of B: Validate JWT or Guest Token, Check user/guest has access to movie, Generate signed URL for quality playlist
     B->>S: Generate signed URL for hls/{movieId}/1080p.m3u8
     S-->>B: Signed URL (expires in 2 hours)
     B-->>F: {file_urls: {"1080p.m3u8": "https://storage.com/hls/movieId/1080p.m3u8?signature=..."}}
@@ -36,25 +36,25 @@ sequenceDiagram
     %% 5. Fetch Quality Playlist Content
     Note over F,S: Step 4: Fetch Quality Playlist (Direct to Storage)
     F->>S: GET 1080p.m3u8 (via signed URL)
-    S-->>F: Quality playlist content<br/>#EXTM3U<br/>#EXT-X-TARGETDURATION:10<br/>#EXTINF:10.0<br/>segment0.ts<br/>#EXTINF:10.0<br/>segment1.ts
+    S-->>F: Quality playlist content
 
     %% 6. Get Segment Signed URLs (Batch)
     Note over F,B: Step 5: Get Segment Access (Batch Request)
     F->>B: POST /api/v1/videos/{movieId}/urls (JWT/Guest Token)
     Note right of F: Body: {files: ["1080p/segment0.ts", "1080p/segment1.ts", "1080p/segment2.ts"]}
-    Note right of B: - Validate JWT or Guest Token<br/>- Check user/guest has access to movie<br/>- Generate signed URLs for segments
+    Note right of B: Validate JWT or Guest Token, Check user/guest has access to movie, Generate signed URLs for segments
     loop For each segment
         B->>S: Generate signed URL for hls/{movieId}/1080p/segmentX.ts
         S-->>B: Signed URL (expires in 2 hours)
     end
-    B-->>F: {file_urls: {<br/>"1080p/segment0.ts": "https://storage.com/...?signature=...",<br/>"1080p/segment1.ts": "https://storage.com/...?signature=...",<br/>"1080p/segment2.ts": "https://storage.com/...?signature=..."<br/>}}
+    B-->>F: {file_urls: {"1080p/segment0.ts": "https://storage.com/...?signature=...", "1080p/segment1.ts": "https://storage.com/...?signature=...", "1080p/segment2.ts": "https://storage.com/...?signature=..."}}
 
     %% 7. Fetch Segments (Direct to Storage/CDN)
     Note over F,C: Step 6: Fetch Video Segments (Direct to Storage/CDN)
     loop For each segment needed
         alt CDN enabled (SaaS mode)
             F->>C: GET segment0.ts (via signed URL)
-            Note right of C: CDN caches with signed URL<br/>Subsequent requests served from CDN
+            Note right of C: CDN caches with signed URL - Subsequent requests served from CDN
             C->>S: GET segment0.ts (cache miss)
             S-->>C: Segment data
             C-->>F: Segment data
@@ -65,7 +65,7 @@ sequenceDiagram
     end
 
     %% 8. Video Playback
-    Note over F: HLS.js plays video seamlessly<br/>Requests more segments as needed<br/>Each segment request requires new signed URL
+    Note over F: HLS.js plays video seamlessly - Requests more segments as needed - Each segment request requires new signed URL
 
     %% Error Handling
     Note over F,B: Error Scenarios

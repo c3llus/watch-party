@@ -1,0 +1,53 @@
+graph TB
+    subgraph "Internet"
+        U[Users]
+        CDN[Cloudflare CDN]
+    end
+    
+    subgraph "GCP Project"
+        subgraph "Load Balancer"
+            LB[Global Load Balancer<br/>HTTPS Termination]
+        end
+        
+        subgraph "VPC Network (10.0.0.0/24)"
+            subgraph "Cloud Run Services"
+                API[API Service]
+                SYNC[Sync Service]
+            end
+            
+            subgraph "Managed Databases"
+                PG[(Cloud SQL<br/>PostgreSQL)]
+                RD[(Redis<br/>Session Store)]
+            end
+            
+            subgraph "Storage"
+                GCS[Cloud Storage<br/>Videos & Assets]
+                AR[Artifact Registry<br/>Container Images]
+            end
+            
+            subgraph "Security"
+                SM[Secret Manager<br/>Credentials]
+            end
+        end
+    end
+    
+    U -->|HTTPS| CDN
+    CDN -->|Cache Miss| LB
+    
+    LB -->|/api/*| API
+    LB -->|/ws| SYNC
+    
+    API -->|Read/Write| PG
+    API -->|Upload/Download| GCS
+    API -->|Get Secrets| SM
+    
+    SYNC -->|Session State| RD
+    SYNC -->|Get Secrets| SM
+    
+    AR -.->|Container Images| API
+    AR -.->|Container Images| SYNC
+    
+    class GCS,AR storage
+    class API,SYNC service
+    class PG,RD database
+    class SM security

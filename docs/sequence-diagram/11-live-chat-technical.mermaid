@@ -15,7 +15,7 @@ sequenceDiagram
     
     %% WebSocket Message Format
     WS->>SS: JSON: {type: "chat", message: "Hello everyone!"}
-    Note right of WS: Chat message format<br/>(has "type" field)
+    Note right of WS: Chat message format (has "type" field)
     
     %% Backend Processing
     SS->>SS: handleChatMessageFromWebSocket()
@@ -30,7 +30,7 @@ sequenceDiagram
     %% Real-time Message Delivery
     loop For each connected user
         SS->>WS: WebSocket sync message
-        Note right of SS: {<br/>  type: "sync",<br/>  payload: {<br/>    action: "chat",<br/>    username: "user",<br/>    data: {chat_message: "text"}<br/>  }<br/>}
+        Note right of SS: type: "sync", payload: action: "chat", username: "user", data: chat_message: "text"
         WS->>RP: handleWebSocketMessage()
         RP->>RP: Process chat sync event
         RP->>Chat: Update chatMessages state
@@ -39,14 +39,14 @@ sequenceDiagram
     end
     
     %% Message Structure in Frontend
-    Note over Chat: ChatMessage Interface:<br/>{<br/>  id: string,<br/>  username: string,<br/>  message: string,<br/>  timestamp: string,<br/>  isGuest?: boolean<br/>}
+    Note over Chat: ChatMessage Interface: id: string, username: string, message: string, timestamp: string, isGuest?: boolean
     
     %% Guest vs Authenticated User Handling
     alt Guest User
-        Note over Chat: Color: guest-bubble (#e3f2fd)
+        Note over Chat: Guest user message styling
         Chat->>Chat: Apply guest styling
     else Authenticated User
-        Note over Chat: Color: auth-bubble (#f3e5f5)
+        Note over Chat: Authenticated user message styling
         Chat->>Chat: Apply auth user styling
     end
     

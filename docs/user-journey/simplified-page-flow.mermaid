@@ -1,0 +1,43 @@
+graph TD
+    START([Application Start]) --> ROUTE{User Type?}
+    
+    ROUTE -->|Admin| A_LOGIN[LoginPage<br/>Admin Credentials]
+    A_LOGIN --> A_DASH[AdminDashboardPage<br/>Content Management]
+    A_DASH --> A_UPLOAD[UploadPage<br/>Video Upload]
+    A_UPLOAD --> A_PROCESS[Background Processing<br/>HLS Transcoding]
+    A_PROCESS --> A_CREATE[RoomCreatePage<br/>Setup Watch Party]
+    A_CREATE --> A_SUCCESS[RoomSuccessPage<br/>Share & Invite]
+    A_SUCCESS --> A_ROOM[RoomPage<br/>Host Controls]
+    
+    ROUTE -->|New User| U_SIGNUP[SignupPage<br/>Account Creation]
+    ROUTE -->|Existing User| U_LOGIN[LoginPage<br/>Authentication]
+    U_SIGNUP --> U_LOGIN
+    U_LOGIN --> U_DASH[UserDashboardPage<br/>Personal Hub]
+    U_DASH --> U_INVITE[Email Invitation<br/>Room Access Grant]
+    U_INVITE --> U_JOIN[RoomJoinPage<br/>Access Validation]
+    U_JOIN --> U_ROOM[RoomPage<br/>Watch Party]
+    
+    U_DASH --> U_LIBRARY[MovieLibraryPage<br/>Browse Content]
+    U_LIBRARY --> U_CREATE[RoomCreatePage<br/>Create Room]
+    U_CREATE --> U_SUCCESS[RoomSuccessPage<br/>Invite Others]
+    U_SUCCESS --> U_HOST[RoomPage<br/>Host Mode]
+    
+    ROUTE -->|Guest| G_LANDING[GuestLandingPage<br/>No Account Needed]
+    G_LANDING --> G_LINK[Room Link<br/>Shared URL]
+    G_LINK --> G_REQUEST[GuestRequestPage<br/>Access Request]
+    G_REQUEST --> G_WAIT[WaitingPage<br/>Approval Pending]
+    G_WAIT --> G_DECISION{Host Approval?}
+    G_DECISION -->|Approved| G_ROOM[RoomPage<br/>Guest Access]
+    G_DECISION -->|Denied| G_DENIED[Access Denied<br/>Return to Landing]
+    G_DENIED --> G_LANDING
+    
+    A_SUCCESS -.->|Share Link| G_LINK
+    A_SUCCESS -.->|Email Invite| U_INVITE
+    U_SUCCESS -.->|Share Link| G_LINK
+    A_ROOM -.->|Approve/Deny| G_DECISION
+    U_HOST -.->|Approve/Deny| G_DECISION
+    
+    A_ROOM --> PARTY[Active Watch Party<br/>Synchronized Viewing]
+    U_ROOM --> PARTY
+    U_HOST --> PARTY  
+    G_ROOM --> PARTY

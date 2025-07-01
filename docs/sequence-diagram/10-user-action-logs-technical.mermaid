@@ -16,7 +16,7 @@ sequenceDiagram
     
     %% Unified WebSocket Message Format
     WS->>SS: JSON: {action: "play", data: {current_time: 123.45}}
-    Note right of WS: Unified sync message format<br/>All actions use same structure
+    Note right of WS: Unified sync message format - All actions use same structure
     
     %% Backend Processing
     SS->>SS: handleDirectSyncMessage()
@@ -48,4 +48,4 @@ sequenceDiagram
     end
     
     %% Key Benefits
-    Note over U, Redis: ✅ No backend storage needed<br/>✅ Real-time admin view<br/>✅ JWT role-based access<br/>✅ Unified event format<br/>✅ Client-side filtering
+    Note over U, Redis: No backend storage needed, Real-time admin view, JWT role-based access, Unified event format, Client-side filtering
