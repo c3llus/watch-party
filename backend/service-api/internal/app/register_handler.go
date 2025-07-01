@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (a *appServer) RegisterHandlers() *gin.Engine {
+func (a *AppServer) RegisterHandlers() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	handler := gin.New()
 

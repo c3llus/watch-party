@@ -21,14 +21,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type syncServer struct {
+type AppServer struct {
 	config      *config.Config
 	handler     *handler.SyncHandler
 	redisClient *redis.Client
 }
 
-// NewSyncServer creates a new sync server instance
-func NewSyncServer(cfg *config.Config) *syncServer {
+// NewAppServer creates a new sync server instance
+func NewAppServer(cfg *config.Config) *AppServer {
 	// service-sync only needs Redis for real-time state management
 	// room validation will be done via HTTP calls to service-api
 
@@ -50,7 +50,7 @@ func NewSyncServer(cfg *config.Config) *syncServer {
 	// initialize handler
 	syncHandler := handler.NewSyncHandler(syncService, jwtManager)
 
-	return &syncServer{
+	return &AppServer{
 		config:      cfg,
 		handler:     syncHandler,
 		redisClient: redisClient,
@@ -58,7 +58,7 @@ func NewSyncServer(cfg *config.Config) *syncServer {
 }
 
 // Serve starts the sync server
-func (s *syncServer) Serve() {
+func (s *AppServer) Serve() {
 	// setup gin
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -129,7 +129,7 @@ func (s *syncServer) Serve() {
 }
 
 // setupRoutes configures the server routes
-func (s *syncServer) setupRoutes(router *gin.Engine) {
+func (s *AppServer) setupRoutes(router *gin.Engine) {
 	// websocket endpoint for room synchronization
 	router.GET("/ws/room/:roomID", s.handler.HandleWebSocket)
 
@@ -148,7 +148,7 @@ func (s *syncServer) setupRoutes(router *gin.Engine) {
 }
 
 // getSyncPort returns the port for the sync service
-func (s *syncServer) getSyncPort() string {
+func (s *AppServer) getSyncPort() string {
 	// use different port for sync service, default to 8081
 	if port := os.Getenv("SYNC_PORT"); port != "" {
 		return port
@@ -157,7 +157,7 @@ func (s *syncServer) getSyncPort() string {
 }
 
 // gracefulShutdown handles graceful server shutdown
-func (s *syncServer) gracefulShutdown(server *http.Server) {
+func (s *AppServer) gracefulShutdown(server *http.Server) {
 	ctx, stopCtx := context.WithCancel(context.Background())
 
 	go func() {

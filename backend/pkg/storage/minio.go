@@ -26,6 +26,14 @@ type minioProvider struct {
 
 // NewMinIOProvider creates a new MinIO storage provider
 func NewMinIOProvider(endpoint, accessKey, secretKey, bucket string, useSSL bool, publicEndpoint string) (Provider, error) {
+	logger.Info(fmt.Sprintf("Creating MinIO provider with endpoint: %s, publicEndpoint: %s, useSSL: %v", endpoint, publicEndpoint, useSSL))
+
+	// If publicEndpoint is empty, use the same as endpoint
+	if publicEndpoint == "" {
+		publicEndpoint = endpoint
+		logger.Info(fmt.Sprintf("PublicEndpoint was empty, setting to: %s", publicEndpoint))
+	}
+
 	// create MinIO client for internal operations
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
@@ -34,6 +42,8 @@ func NewMinIOProvider(endpoint, accessKey, secretKey, bucket string, useSSL bool
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MinIO client: %w", err)
 	}
+	logger.Info(fmt.Sprintf("MinIO client created successfully for endpoint: %s", endpoint))
+
 	if client.IsOffline() {
 		return nil, fmt.Errorf("MinIO client is not online at %s", endpoint)
 	}
@@ -45,6 +55,7 @@ func NewMinIOProvider(endpoint, accessKey, secretKey, bucket string, useSSL bool
 	if err != nil {
 		return nil, fmt.Errorf("failed to create public MinIO client: %w", err)
 	}
+	logger.Info(fmt.Sprintf("MinIO public client created successfully for endpoint: %s", publicEndpoint))
 
 	if publicClient.IsOffline() {
 		return nil, fmt.Errorf("public MinIO client is not online at %s", publicEndpoint)
@@ -59,27 +70,35 @@ func NewMinIOProvider(endpoint, accessKey, secretKey, bucket string, useSSL bool
 		useSSL:         useSSL,
 	}
 
+	logger.Info(fmt.Sprintf("MinIO provider created, checking bucket: %s", bucket))
 	// ensure bucket exists
 	err = provider.ensureBucket(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to ensure bucket exists: %w", err)
 	}
 
+	logger.Info("MinIO provider initialized successfully")
 	return provider, nil
 }
 
 // ensureBucket creates the bucket if it doesn't exist
 func (m *minioProvider) ensureBucket(ctx context.Context) error {
+	logger.Info(fmt.Sprintf("Checking if bucket exists: %s", m.bucket))
 	exists, err := m.client.BucketExists(ctx, m.bucket)
 	if err != nil {
+		logger.Info(fmt.Sprintf("Error checking bucket existence: %v", err))
 		return fmt.Errorf("failed to check if bucket exists: %w", err)
 	}
 
+	logger.Info(fmt.Sprintf("Bucket exists: %v", exists))
 	if !exists {
+		logger.Info(fmt.Sprintf("Creating bucket: %s", m.bucket))
 		err = m.client.MakeBucket(ctx, m.bucket, minio.MakeBucketOptions{})
 		if err != nil {
+			logger.Info(fmt.Sprintf("Error creating bucket: %v", err))
 			return fmt.Errorf("failed to create bucket: %w", err)
 		}
+		logger.Info(fmt.Sprintf("Bucket created successfully: %s", m.bucket))
 	}
 
 	return nil

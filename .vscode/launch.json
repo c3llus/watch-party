@@ -1,6 +1,7 @@
 {
     "version": "0.2.0",
     "configurations": [
+        
         {
             "name": "backend-service-api",
             "type": "go",
@@ -15,6 +16,21 @@
             "mode": "auto",
             "program": "${workspaceFolder}/backend/service-sync/cmd",
             "envFile": "${workspaceFolder}/backend/service-sync/cmd/.env"
+        },{
+            "name": "standalone",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/backend/standalone",
+            "env": {
+                "GIN_MODE": "debug",
+                "LOG_LEVEL": "debug",
+                "CLEAN_START": "true"
+            },
+            "args": ["--clean"],
+            "showLog": true,
+            "trace": "verbose",
+            "logOutput": "rpc",
         }
     ]
 }

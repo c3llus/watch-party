@@ -27,7 +27,7 @@ import (
 	userService "watch-party/service-api/internal/service/user"
 )
 
-type appServer struct {
+type AppServer struct {
 	config                *config.Config
 	middleware            mdw.MiddlewareProvider
 	controller            ctl.ControllerProvider
@@ -39,8 +39,8 @@ type appServer struct {
 	roomService           *roomService.Service
 }
 
-// NewAppServer creates a new instance of appServer with the provided configuration, middleware, and controller.
-func NewAppServer(cfg *config.Config) *appServer {
+// NewAppServer creates a new instance of AppServer with the provided configuration, middleware, and controller.
+func NewAppServer(cfg *config.Config) *AppServer {
 	// initialize database
 	db, err := database.NewPgDB(cfg)
 	if err != nil {
@@ -92,7 +92,7 @@ func NewAppServer(cfg *config.Config) *appServer {
 	// initialize middleware
 	middleware := mdw.NewMiddleware()
 
-	return &appServer{
+	return &AppServer{
 		config:                cfg,
 		middleware:            middleware,
 		controller:            controller,
@@ -105,7 +105,7 @@ func NewAppServer(cfg *config.Config) *appServer {
 	}
 }
 
-func (a *appServer) Serve() {
+func (a *AppServer) Serve() {
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%s", a.config.Port),
 		Handler: a.RegisterHandlers(),
@@ -126,7 +126,7 @@ func (a *appServer) Serve() {
 	logger.Info("server shutdown complete")
 }
 
-func (a *appServer) gracefulShutdown(server *http.Server) {
+func (a *AppServer) gracefulShutdown(server *http.Server) {
 	ctx, stopCtx := context.WithCancel(context.Background())
 
 	go func() {

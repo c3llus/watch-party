@@ -7,6 +7,12 @@
 *debug*
 *.mp4
 
+# Large embedded binaries
+backend/standalone/minio
+backend/standalone/postgres
+backend/standalone/redis-server
+backend/standalone/*.bin
+
 .vite/
 
 # Terraform files

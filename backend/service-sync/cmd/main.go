@@ -14,6 +14,6 @@ func main() {
 	logger.InitLogger(cfg)
 
 	// create and start the sync service
-	server := app.NewSyncServer(cfg)
+	server := app.NewAppServer(cfg)
 	server.Serve()
 }
