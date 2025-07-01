@@ -12,7 +12,7 @@ export default function AdminDashboardPage() {
       try {
         setIsLoadingMovies(true)
         const response = await movieService.getMovies()
-        setMovies(response.movies)
+        setMovies(response.movies || [])
       } catch (err) {
         console.error('failed to load movies:', err)
         setMovies([])

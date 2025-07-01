@@ -100,7 +100,7 @@ func (r *repository) GetAll(limit, offset int) ([]model.Movie, int, error) {
 	}
 	defer rows.Close()
 
-	var movies []model.Movie
+	var movies []model.Movie = make([]model.Movie, 0)
 	for rows.Next() {
 		var movie model.Movie
 		err := rows.Scan(&movie.ID, &movie.Title, &movie.Description,
@@ -195,7 +195,7 @@ func (r *repository) GetByUploader(uploaderID uuid.UUID, limit, offset int) ([]m
 	}
 	defer rows.Close()
 
-	var movies []model.Movie
+	var movies []model.Movie = make([]model.Movie, 0)
 	for rows.Next() {
 		var movie model.Movie
 		err := rows.Scan(&movie.ID, &movie.Title, &movie.Description,

@@ -16,7 +16,7 @@ export default function MovieLibraryPage() {
       setLoading(true)
       setError(null)
       const response = await movieService.getMyMovies(currentPage, pageSize)
-      setMovies(response.movies)
+      setMovies(response.movies || [])
       setTotalCount(response.total_count)
     } catch (err) {
       console.error('failed to load movies:', err)
@@ -91,8 +91,8 @@ export default function MovieLibraryPage() {
         </Link>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-        <div>
+      <div style={{ marginBottom: '2rem' }}>
+        <div style={{ marginBottom: '1rem' }}>
           <h1 style={{ color: '#333', margin: 0 }}>Movie Library</h1>
           <p style={{ color: '#666', margin: '0.5rem 0 0 0' }}>
             Manage your uploaded movies and their processing status
@@ -101,6 +101,7 @@ export default function MovieLibraryPage() {
         <Link 
           to="/admin/upload" 
           style={{
+            display: 'inline-block',
             padding: '0.75rem 1.5rem',
             backgroundColor: '#007bff',
             color: 'white',
