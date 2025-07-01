@@ -1,0 +1,51 @@
+sequenceDiagram
+    participant U as User (Guest/Auth)
+    participant VPlayer as VideoPlayer
+    participant RP as RoomPage
+    participant UL as UserLogs Component
+    participant WS as WebSocket Service
+    participant SS as Sync Service
+    participant Redis as Redis
+
+    Note over U, Redis: Unified User Action Logs (Admin Real-Time View)
+
+    %% Video Action Triggers
+    U->>VPlayer: Performs action (play/pause/seek)
+    VPlayer->>RP: onPlay/onPause/onSeeked callback
+    RP->>WS: sendSyncAction({action, currentTime})
+    
+    %% Unified WebSocket Message Format
+    WS->>SS: JSON: {action: "play", data: {current_time: 123.45}}
+    Note right of WS: Unified sync message format<br/>All actions use same structure
+    
+    %% Backend Processing
+    SS->>SS: handleDirectSyncMessage()
+    SS->>SS: createSyncMessage() with initialized SyncData
+    alt Video Action
+        SS->>SS: SyncAction() - update room state
+    else Chat Action
+        SS->>SS: HandleChatMessage() - process chat
+    end
+    
+    %% Broadcasting to All Users
+    SS->>Redis: PublishEvent(roomID, syncMessage)
+    Redis-->>SS: Event delivered to all instances
+    SS->>SS: broadcastSyncToRoom()
+    
+    %% Real-time Updates to All Users
+    loop For each connected user
+        SS->>WS: WebSocket sync message
+        WS->>RP: onSyncEvent callback
+        RP->>RP: Add to syncEvents array
+        
+        alt Regular User
+            RP->>RP: Process video/chat events normally
+        else Admin User
+            RP->>UL: Pass all syncEvents as prop
+            UL->>UL: Filter & display all actions (including chat)
+            UL->>U: Real-time admin activity view
+        end
+    end
+    
+    %% Key Benefits
+    Note over U, Redis: ✅ No backend storage needed<br/>✅ Real-time admin view<br/>✅ JWT role-based access<br/>✅ Unified event format<br/>✅ Client-side filtering

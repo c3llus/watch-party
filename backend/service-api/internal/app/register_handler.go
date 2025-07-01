@@ -104,6 +104,9 @@ func (a *AppServer) RegisterHandlers() *gin.Engine {
 	userRoutes := api.Group("")
 	userRoutes.Use(authMiddleware)
 	{
+		// user profile endpoint
+		userRoutes.GET("/profile", a.controller.GetProfile)
+
 		// room management - authenticated users
 		userRoutes.POST("/rooms", a.roomController.CreateRoom)
 		userRoutes.GET("/rooms", a.roomController.GetRooms)

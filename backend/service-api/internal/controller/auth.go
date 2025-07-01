@@ -61,3 +61,23 @@ func (ctrl *controller) Logout(c *gin.Context) {
 	logger.Info("user logged out successfully")
 	c.JSON(http.StatusOK, gin.H{"message": "logged out successfully"})
 }
+
+// GetProfile returns the current user's profile
+func (ctrl *controller) GetProfile(c *gin.Context) {
+	// get user from context (set by auth middleware)
+	userValue, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	user, ok := userValue.(*model.User)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid user context"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user": user.ToProfile(),
+	})
+}

@@ -10,15 +10,22 @@ export interface SyncAction {
 
 // backend sync message format (what we receive from backend)
 export interface BackendSyncMessage {
-  action: 'play' | 'pause' | 'seek'
-  current_time: number
+  action: 'play' | 'pause' | 'seek' | 'join' | 'leave' | 'buffering' | 'ready' | 'chat'
+  current_time?: number
   timestamp: string // ISO timestamp from backend
   user_id?: string
   username?: string
+  data?: {
+    current_time?: number
+    duration?: number
+    playback_rate?: number
+    is_buffering?: boolean
+    chat_message?: string
+  }
 }
 
 export interface WebSocketMessage {
-  type: 'sync' | 'participants' | 'state' | 'guest_request' | 'guest_approved' | 'error' | 'connected' | 'disconnected' | 'request_state' | 'provide_state'
+  type: 'sync' | 'participants' | 'state' | 'guest_request' | 'guest_approved' | 'error' | 'connected' | 'disconnected' | 'request_state' | 'provide_state' | 'chat'
   payload?: unknown  // backend uses 'payload' instead of 'data'
   data?: unknown     // keep for backwards compatibility
   room_id?: string
@@ -172,19 +179,23 @@ class WebSocketService {
     console.log('sync action sent successfully')
   }
 
-  // send chat message (if implemented)
+  // send chat message using unified sync action format
   sendChatMessage(message: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn('websocket not connected, cannot send chat message')
       return
     }
 
-    const wsMessage = {
-      type: 'chat',
-      data: { message }
+    // unified format: same as sync actions but with chat action
+    const chatSyncAction = {
+      action: 'chat',
+      data: {
+        chat_message: message.trim()
+      }
     }
 
-    this.ws.send(JSON.stringify(wsMessage))
+    console.log('sending chat message as sync action:', chatSyncAction)
+    this.ws.send(JSON.stringify(chatSyncAction))
   }
 
   // request current room state from backend
@@ -292,6 +303,9 @@ class WebSocketService {
         break
       case 'guest_approved':
         this.emit('guest_approved', message)
+        break
+      case 'chat':
+        this.emit('chat', message)
         break
       case 'error':
         this.emit('error', message)

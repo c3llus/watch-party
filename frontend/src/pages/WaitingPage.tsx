@@ -230,12 +230,14 @@ export default function WaitingPage() {
 
   return (
     <div style={{
+      padding: '1rem',
+      fontFamily: 'system-ui, sans-serif',
+      maxWidth: '1200px',
+      margin: '0 auto',
       minHeight: '100vh',
       display: 'flex',
       alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: '#f8f9fa',
-      fontFamily: 'system-ui, sans-serif'
+      justifyContent: 'center'
     }}>
       <div style={{
         maxWidth: '400px',

@@ -37,14 +37,18 @@ type syncService struct {
 	redis       *redis.Client
 	connections map[uuid.UUID]map[uuid.UUID]*websocket.Conn
 	connMutex   sync.RWMutex
+	// per-connection mutexes to prevent concurrent writes to WebSocket connections
+	connWriteMutexes map[uuid.UUID]map[uuid.UUID]*sync.Mutex
+	writeMutexLock   sync.RWMutex
 }
 
 // NewSyncService creates a new sync service instance
 func NewSyncService(syncRepo repository.SyncRepository, redisClient *redis.Client) SyncService {
 	service := &syncService{
-		syncRepo:    syncRepo,
-		redis:       redisClient,
-		connections: make(map[uuid.UUID]map[uuid.UUID]*websocket.Conn),
+		syncRepo:         syncRepo,
+		redis:            redisClient,
+		connections:      make(map[uuid.UUID]map[uuid.UUID]*websocket.Conn),
+		connWriteMutexes: make(map[uuid.UUID]map[uuid.UUID]*sync.Mutex),
 	}
 
 	// start Redis subscription handler
@@ -118,10 +122,12 @@ func (s *syncService) HandleConnection(ctx context.Context, roomID, userID uuid.
 		state, err := s.GetRoomState(ctx, roomID)
 		if err == nil {
 			logger.Infof("sending stored room state: playing=%v, time=%.2f", state.IsPlaying, state.CurrentTime)
-			s.sendToConnection(conn, &model.WebSocketMessage{
+			if err := s.sendToConnectionSafe(roomID, userID, conn, &model.WebSocketMessage{
 				Type:    model.MessageTypeState,
 				Payload: state,
-			})
+			}); err != nil {
+				logger.Error(err, "failed to send room state")
+			}
 		} else {
 			logger.Error(err, "failed to get stored room state")
 		}
@@ -134,10 +140,12 @@ func (s *syncService) HandleConnection(ctx context.Context, roomID, userID uuid.
 		for i, p := range participants {
 			logger.Infof("participant %d: %s (%s)", i+1, p.Username, p.UserID)
 		}
-		s.sendToConnection(conn, &model.WebSocketMessage{
+		if err := s.sendToConnectionSafe(roomID, userID, conn, &model.WebSocketMessage{
 			Type:    model.MessageTypeParticipants,
 			Payload: participants,
-		})
+		}); err != nil {
+			logger.Error(err, "failed to send participants list")
+		}
 	} else {
 		logger.Error(err, "failed to get room participants")
 	}
@@ -177,6 +185,9 @@ func (s *syncService) JoinRoom(ctx context.Context, roomID, userID uuid.UUID, us
 		Timestamp: time.Now(),
 	}
 
+	// add to user logs - no longer needed, handled in frontend
+	// s.addUserLog(joinMessage)
+
 	s.BroadcastSync(ctx, joinMessage)
 
 	logger.Infof("user %s joined room %s", username, roomID)
@@ -202,6 +213,9 @@ func (s *syncService) LeaveRoom(ctx context.Context, roomID, userID uuid.UUID) e
 		Action:    model.ActionLeave,
 		Timestamp: time.Now(),
 	}
+
+	// add to user logs - no longer needed, handled in frontend
+	// s.addUserLog(leaveMessage)
 
 	s.BroadcastSync(ctx, leaveMessage)
 
@@ -264,6 +278,9 @@ func (s *syncService) SyncAction(ctx context.Context, message *model.SyncMessage
 
 	s.syncRepo.UpdateParticipantPresence(ctx, message.RoomID, message.UserID)
 
+	// add to user logs - no longer needed, handled in frontend
+	// s.addUserLog(message)
+
 	s.BroadcastSync(ctx, message)
 
 	return nil
@@ -292,6 +309,14 @@ func (s *syncService) addConnection(roomID, userID uuid.UUID, conn *websocket.Co
 		s.connections[roomID] = make(map[uuid.UUID]*websocket.Conn)
 	}
 	s.connections[roomID][userID] = conn
+
+	// also initialize write mutex for this connection
+	s.writeMutexLock.Lock()
+	if s.connWriteMutexes[roomID] == nil {
+		s.connWriteMutexes[roomID] = make(map[uuid.UUID]*sync.Mutex)
+	}
+	s.connWriteMutexes[roomID][userID] = &sync.Mutex{}
+	s.writeMutexLock.Unlock()
 }
 
 func (s *syncService) removeConnection(roomID, userID uuid.UUID) {
@@ -304,10 +329,39 @@ func (s *syncService) removeConnection(roomID, userID uuid.UUID) {
 			delete(s.connections, roomID)
 		}
 	}
+
+	// also clean up write mutex
+	s.writeMutexLock.Lock()
+	if roomMutexes, exists := s.connWriteMutexes[roomID]; exists {
+		delete(roomMutexes, userID)
+		if len(roomMutexes) == 0 {
+			delete(s.connWriteMutexes, roomID)
+		}
+	}
+	s.writeMutexLock.Unlock()
 }
 
 func (s *syncService) broadcastToRoom(roomID uuid.UUID, message *model.WebSocketMessage) {
-	s.broadcastToRoomExcluding(roomID, message, uuid.Nil)
+	s.connMutex.RLock()
+	roomConnections, exists := s.connections[roomID]
+	s.connMutex.RUnlock()
+
+	if !exists {
+		return
+	}
+
+	for userID, conn := range roomConnections {
+		go func(userID uuid.UUID, conn *websocket.Conn) {
+			select {
+			case <-time.After(100 * time.Millisecond):
+				logger.Warnf("timeout sending message to user %s", userID)
+			default:
+				if err := s.sendToConnectionSafe(roomID, userID, conn, message); err != nil {
+					logger.Errorf(err, "failed to send message to user %s", userID)
+				}
+			}
+		}(userID, conn)
+	}
 }
 
 // broadcastSyncToRoom broadcasts a sync message to all room participants in the frontend-expected format
@@ -321,6 +375,17 @@ func (s *syncService) broadcastSyncToRoom(roomID uuid.UUID, syncMessage *model.S
 		"timestamp":    syncMessage.Timestamp.Format(time.RFC3339),
 		"user_id":      syncMessage.UserID.String(),
 		"username":     syncMessage.Username,
+	}
+
+	// include data object if there's additional data (like chat messages)
+	if syncMessage.Data.ChatMessage != "" || syncMessage.Data.Duration > 0 || syncMessage.Data.PlaybackRate > 0 || syncMessage.Data.IsBuffering {
+		frontendSyncData["data"] = map[string]interface{}{
+			"current_time":  syncMessage.Data.CurrentTime,
+			"duration":      syncMessage.Data.Duration,
+			"playback_rate": syncMessage.Data.PlaybackRate,
+			"is_buffering":  syncMessage.Data.IsBuffering,
+			"chat_message":  syncMessage.Data.ChatMessage,
+		}
 	}
 
 	webSocketMessage := &model.WebSocketMessage{
@@ -340,14 +405,35 @@ func (s *syncService) broadcastToRoomExcluding(roomID uuid.UUID, message *model.
 			if userID == excludeUserID {
 				continue
 			}
-			if err := s.sendToConnection(conn, message); err != nil {
-				logger.Errorf(err, "failed to send message to user %s", userID)
-			}
+			go func(userID uuid.UUID, conn *websocket.Conn) {
+				if err := s.sendToConnectionSafe(roomID, userID, conn, message); err != nil {
+					logger.Errorf(err, "failed to send message to user %s", userID)
+				}
+			}(userID, conn)
 		}
 	}
 }
 
 func (s *syncService) sendToConnection(conn *websocket.Conn, message *model.WebSocketMessage) error {
+	return conn.WriteJSON(message)
+}
+
+// sendToConnectionSafe sends a message to a specific connection with proper synchronization
+func (s *syncService) sendToConnectionSafe(roomID, userID uuid.UUID, conn *websocket.Conn, message *model.WebSocketMessage) error {
+	// get the write mutex for this specific connection
+	s.writeMutexLock.RLock()
+	var writeMutex *sync.Mutex
+	if s.connWriteMutexes[roomID] != nil {
+		writeMutex = s.connWriteMutexes[roomID][userID]
+	}
+	s.writeMutexLock.RUnlock()
+
+	// if we have a mutex, use it to serialize writes
+	if writeMutex != nil {
+		writeMutex.Lock()
+		defer writeMutex.Unlock()
+	}
+
 	return conn.WriteJSON(message)
 }
 
@@ -359,7 +445,23 @@ func (s *syncService) sendErrorToConnection(conn *websocket.Conn, code, message 
 			Message: message,
 		},
 	}
+	// use the basic sendToConnection for error messages
+	// errors are typically sent in response to immediate requests, so concurrency is less likely
 	s.sendToConnection(conn, errorMsg)
+}
+
+// sendErrorToConnectionSafe sends error message with proper synchronization when IDs are available
+func (s *syncService) sendErrorToConnectionSafe(roomID, userID uuid.UUID, conn *websocket.Conn, code, message string) {
+	errorMsg := &model.WebSocketMessage{
+		Type: model.MessageTypeError,
+		Payload: &model.ErrorMessage{
+			Code:    code,
+			Message: message,
+		},
+	}
+	if err := s.sendToConnectionSafe(roomID, userID, conn, errorMsg); err != nil {
+		logger.Errorf(err, "failed to send error message to user %s", userID)
+	}
 }
 
 // handleConnectionMessages handles incoming WebSocket messages from a connection
@@ -397,22 +499,20 @@ func (s *syncService) readWebSocketMessage(conn *websocket.Conn, userID, roomID 
 
 // processWebSocketMessage routes and processes different message types
 func (s *syncService) processWebSocketMessage(ctx context.Context, roomID, userID uuid.UUID, username string, conn *websocket.Conn, rawMessage map[string]interface{}) {
-	msgType, hasType := rawMessage["type"].(string)
-	if !hasType {
-		s.handleDirectSyncMessage(ctx, roomID, userID, username, conn, rawMessage)
-		return
+	// check for special message types first
+	if msgType, hasType := rawMessage["type"].(string); hasType {
+		switch msgType {
+		case "provide_state":
+			s.handleProvideState(ctx, roomID, userID, username, conn, rawMessage)
+			return
+		case "request_state":
+			s.handleRequestState(ctx, roomID, userID, username, conn, rawMessage)
+			return
+		}
 	}
 
-	switch msgType {
-	case "sync_action":
-		s.handleLegacySyncAction(ctx, roomID, userID, username, conn, rawMessage)
-	case "request_state":
-		s.requestLiveStateFromExistingUser(ctx, roomID, userID, conn)
-	case "provide_state":
-		s.handleExistingUserStateResponse(ctx, roomID, userID, rawMessage)
-	default:
-		logger.Warnf("unknown message type: %s from user %s", msgType, username)
-	}
+	// if no special type, treat as direct sync message (unified format)
+	s.handleDirectSyncMessage(ctx, roomID, userID, username, conn, rawMessage)
 }
 
 // handleLegacySyncAction processes legacy frontend sync_action format
@@ -454,8 +554,12 @@ func (s *syncService) handleDirectSyncMessage(ctx context.Context, roomID, userI
 		if currentTime, ok := data["current_time"].(float64); ok {
 			message.Data.CurrentTime = currentTime
 		}
+		if chatMessage, ok := data["chat_message"].(string); ok {
+			message.Data.ChatMessage = chatMessage
+		}
 	}
 
+	// all actions (including chat) are handled as sync actions
 	s.executeSyncAction(ctx, conn, &message)
 }
 
@@ -468,6 +572,7 @@ func (s *syncService) createSyncMessage(roomID, userID uuid.UUID, username, acti
 		Username:  username,
 		Timestamp: time.Now(),
 		Action:    model.SyncAction(action),
+		Data:      model.SyncData{}, // initialize empty data struct
 	}
 }
 
@@ -511,7 +616,7 @@ func (s *syncService) requestLiveStateFromExistingUser(ctx context.Context, room
 	if sourceConn == nil {
 		// if no other users, fall back to stored state
 		logger.Warnf("no other users found in room %s, falling back to stored state", roomID)
-		s.sendStoredRoomState(ctx, roomID, requesterConn)
+		s.sendStoredRoomStateSafe(ctx, roomID, requesterID, requesterConn)
 		return
 	}
 
@@ -527,9 +632,9 @@ func (s *syncService) requestLiveStateFromExistingUser(ctx context.Context, room
 	}
 
 	logger.Infof("requesting live state from participant %s for new participant %s in room %s", sourceUserID, requesterID, roomID)
-	if err := s.sendToConnection(sourceConn, stateRequestMsg); err != nil {
+	if err := s.sendToConnectionSafe(roomID, sourceUserID, sourceConn, stateRequestMsg); err != nil {
 		logger.Error(err, "failed to send state request to existing participant")
-		s.sendStoredRoomState(ctx, roomID, requesterConn)
+		s.sendStoredRoomStateSafe(ctx, roomID, requesterID, requesterConn)
 	} else {
 		logger.Infof("state request sent successfully to participant %s", sourceUserID)
 	}
@@ -580,7 +685,7 @@ func (s *syncService) handleExistingUserStateResponse(ctx context.Context, roomI
 	}
 
 	logger.Infof("forwarding live state from %s to %s in room %s", sourceUserID, requesterID, roomID)
-	if err := s.sendToConnection(requesterConn, stateMsg); err != nil {
+	if err := s.sendToConnectionSafe(roomID, requesterID, requesterConn, stateMsg); err != nil {
 		logger.Error(err, "failed to send state to requesting user")
 	} else {
 		logger.Infof("live state successfully forwarded to %s", requesterID)
@@ -600,6 +705,21 @@ func (s *syncService) sendStoredRoomState(ctx context.Context, roomID uuid.UUID,
 		})
 	} else {
 		s.sendErrorToConnection(conn, "STATE_ERROR", "Failed to get room state")
+	}
+}
+
+// sendStoredRoomStateSafe sends the stored room state as fallback with proper synchronization
+func (s *syncService) sendStoredRoomStateSafe(ctx context.Context, roomID, userID uuid.UUID, conn *websocket.Conn) {
+	state, err := s.GetRoomState(ctx, roomID)
+	if err == nil {
+		if err := s.sendToConnectionSafe(roomID, userID, conn, &model.WebSocketMessage{
+			Type:    model.MessageTypeState,
+			Payload: state,
+		}); err != nil {
+			logger.Error(err, "failed to send stored room state")
+		}
+	} else {
+		s.sendErrorToConnectionSafe(roomID, userID, conn, "STATE_ERROR", "Failed to get room state")
 	}
 }
 
@@ -672,7 +792,74 @@ func (s *syncService) handleRedisMessages() {
 		s.connMutex.RUnlock()
 
 		if hasRoom && connectionCount > 0 {
+			// broadcast all actions (including chat) as sync messages
 			s.broadcastSyncToRoom(syncMessage.RoomID, &syncMessage, syncMessage.UserID)
 		}
 	}
+}
+
+// handleProvideState processes provide_state messages from existing users
+func (s *syncService) handleProvideState(ctx context.Context, roomID, userID uuid.UUID, username string, conn *websocket.Conn, rawMessage map[string]interface{}) {
+	logger.Infof("processing provide_state message from user %s", username)
+
+	requesterIDStr, hasRequesterID := rawMessage["requester_id"].(string)
+	if !hasRequesterID {
+		logger.Warnf("provide_state message missing requester_id from user %s", username)
+		return
+	}
+
+	requesterID, err := uuid.Parse(requesterIDStr)
+	if err != nil {
+		logger.Errorf(err, "invalid requester_id in provide_state message from user %s", username)
+		return
+	}
+
+	state, hasState := rawMessage["state"].(map[string]interface{})
+	if !hasState {
+		logger.Warnf("provide_state message missing state from user %s", username)
+		return
+	}
+
+	// find the requester's connection and send them the state
+	s.connMutex.RLock()
+	requesterConn, exists := s.findConnection(roomID, requesterID)
+	s.connMutex.RUnlock()
+
+	if !exists || requesterConn == nil {
+		logger.Warnf("requester %s not found or connection is nil for provide_state", requesterID)
+		return
+	}
+
+	// send state directly to the requester
+	stateMessage := &model.WebSocketMessage{
+		Type:    model.MessageTypeState,
+		Payload: state,
+	}
+
+	err = s.sendToConnectionSafe(roomID, requesterID, requesterConn, stateMessage)
+	if err != nil {
+		logger.Errorf(err, "failed to send state to requester %s", requesterID)
+		return
+	}
+
+	logger.Infof("successfully sent state from %s to requester %s", username, requesterID)
+}
+
+// handleRequestState processes request_state messages from new users
+func (s *syncService) handleRequestState(ctx context.Context, roomID, userID uuid.UUID, username string, conn *websocket.Conn, rawMessage map[string]interface{}) {
+	logger.Infof("processing request_state message from user %s", username)
+
+	// this method can trigger a request to existing users if needed
+	// for now, we'll let the normal join flow handle state requests
+	s.requestLiveStateFromExistingUser(ctx, roomID, userID, conn)
+}
+
+// findConnection finds a connection for a specific user in a room
+func (s *syncService) findConnection(roomID, userID uuid.UUID) (*websocket.Conn, bool) {
+	if roomConns, exists := s.connections[roomID]; exists {
+		if conn, userExists := roomConns[userID]; userExists {
+			return conn, true
+		}
+	}
+	return nil, false
 }

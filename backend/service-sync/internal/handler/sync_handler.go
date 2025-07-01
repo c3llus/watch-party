@@ -102,7 +102,7 @@ func (h *SyncHandler) HandleWebSocket(c *gin.Context) {
 		username = validationResp.GuestName + " (Guest)"
 	} else {
 		// Handle authenticated user connection - use JWT token
-		userID, username, err = h.getUserFromToken(c)
+		userID, username, _, err = h.getUserFromToken(c)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing authentication token"})
 			return
@@ -183,7 +183,8 @@ func (h *SyncHandler) GetRoomParticipants(c *gin.Context) {
 // helper functions for authentication/authorization
 // in production, these would be middleware
 
-func (h *SyncHandler) getUserFromToken(c *gin.Context) (uuid.UUID, string, error) {
+// getUserFromToken extracts user ID, username, and role from JWT token
+func (h *SyncHandler) getUserFromToken(c *gin.Context) (uuid.UUID, string, string, error) {
 	var tokenString string
 
 	authHeader := c.GetHeader("Authorization")
@@ -199,12 +200,12 @@ func (h *SyncHandler) getUserFromToken(c *gin.Context) (uuid.UUID, string, error
 	}
 
 	if tokenString == "" {
-		return uuid.Nil, "", fmt.Errorf("authorization token required")
+		return uuid.Nil, "", "", fmt.Errorf("authorization token required")
 	}
 
 	claims, err := h.jwtManager.ValidateToken(tokenString)
 	if err != nil {
-		return uuid.Nil, "", fmt.Errorf("invalid token: %w", err)
+		return uuid.Nil, "", "", fmt.Errorf("invalid token: %w", err)
 	}
 
 	username := strings.Split(claims.Email, "@")[0]
@@ -212,7 +213,7 @@ func (h *SyncHandler) getUserFromToken(c *gin.Context) (uuid.UUID, string, error
 		username = "User"
 	}
 
-	return claims.UserID, username, nil
+	return claims.UserID, username, claims.Role, nil
 }
 
 func (h *SyncHandler) extractPaginationParams(c *gin.Context) (int, int) {

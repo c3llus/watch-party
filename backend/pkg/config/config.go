@@ -273,7 +273,7 @@ func loadFromEnvironment() *Config {
 		CORS: CORSConfig{
 			AllowedOrigins: parseOptionalStringSlice("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173,http://localhost:5174"),
 			AllowedMethods: parseOptionalStringSlice("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS"),
-			AllowedHeaders: parseOptionalStringSlice("CORS_ALLOWED_HEADERS", "Content-Type,Authorization,User-Agent,Sec-Ch-Ua,Sec-Ch-Ua-Mobile,Sec-Ch-Ua-Platform,Accept,Accept-Language,Accept-Encoding,Cache-Control,Connection,Host,Origin,Referer,Sec-Fetch-Dest,Sec-Fetch-Mode,Sec-Fetch-Site,X-Requested-With"),
+			AllowedHeaders: parseOptionalStringSlice("CORS_ALLOWED_HEADERS", "Content-Type,Authorization,x-guest-token,User-Agent,Sec-Ch-Ua,Sec-Ch-Ua-Mobile,Sec-Ch-Ua-Platform,Accept,Accept-Language,Accept-Encoding,Cache-Control,Connection,Host,Origin,Referer,Sec-Fetch-Dest,Sec-Fetch-Mode,Sec-Fetch-Site,X-Requested-With"),
 		},
 	}
 }

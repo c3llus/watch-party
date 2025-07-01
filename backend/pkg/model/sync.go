@@ -17,6 +17,7 @@ const (
 	ActionLeave     SyncAction = "leave"
 	ActionBuffering SyncAction = "buffering"
 	ActionReady     SyncAction = "ready"
+	ActionChat      SyncAction = "chat"
 )
 
 // SyncMessage represents a synchronization message between clients
@@ -36,7 +37,8 @@ type SyncData struct {
 	Duration     float64                `json:"duration,omitempty"`      // video total duration
 	PlaybackRate float64                `json:"playback_rate,omitempty"` // playback speed
 	IsBuffering  bool                   `json:"is_buffering,omitempty"`
-	Extra        map[string]interface{} `json:"extra,omitempty"` // additional data
+	ChatMessage  string                 `json:"chat_message,omitempty"` // chat message content
+	Extra        map[string]interface{} `json:"extra,omitempty"`        // additional data
 }
 
 // RoomState represents the current state of a room
@@ -98,6 +100,17 @@ type ErrorMessage struct {
 type HeartbeatMessage struct {
 	Timestamp time.Time `json:"timestamp"`
 	UserID    uuid.UUID `json:"user_id"`
+}
+
+// UserLogEntry represents a user action log entry
+type UserLogEntry struct {
+	ID        uuid.UUID  `json:"id"`
+	RoomID    uuid.UUID  `json:"room_id"`
+	UserID    uuid.UUID  `json:"user_id"`
+	Username  string     `json:"username"`
+	Action    SyncAction `json:"action"`
+	Timestamp time.Time  `json:"timestamp"`
+	Data      SyncData   `json:"data,omitempty"`
 }
 
 // JoinRoomSyncRequest represents a request to join a room for sync

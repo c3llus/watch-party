@@ -4,6 +4,9 @@ import { useRoom } from '../hooks/useRoom'
 import { roomService } from '../services/roomService'
 import { authService } from '../services/authService'
 import { VideoPlayer } from '../components/VideoPlayer'
+import { Chat } from '../components/Chat'
+import { UserLogs } from '../components/UserLogs'
+import type { BackendSyncMessage } from '../services/webSocketService'
 
 interface GuestRequest {
   id: string
@@ -23,48 +26,58 @@ export default function RoomPage() {
   // track video errors separately from room errors
   const [videoError, setVideoError] = useState<string | null>(null)
   
-  // track if we're applying a sync action to prevent echo
-  const [isApplyingSync, setIsApplyingSync] = useState(false)
-  
   // guest requests (for hosts)
   const [guestRequests, setGuestRequests] = useState<GuestRequest[]>([])
   
-  // callback to wrap sync application
-  const handleApplySync = useCallback((applySyncFn: () => void) => {
-    setIsApplyingSync(true)
-    applySyncFn()
-    // reset flag after a short delay to allow events to process
-    setTimeout(() => setIsApplyingSync(false), 100)
-  }, [setIsApplyingSync])
+  // check if current user is admin
+  const currentUser = authService.getCurrentUser()
+  const isAdmin = currentUser && currentUser.role === 'admin'
+  
+  // state for UI toggles
+  const [showUserLogs, setShowUserLogs] = useState(false)
+  
+  // user logs sync events
+  const [syncEvents, setSyncEvents] = useState<BackendSyncMessage[]>([])
+  
+  // sync event callback for user logs
+  const handleSyncEvent = useCallback((syncData: BackendSyncMessage) => {
+    console.log('RoomPage: received sync event:', syncData);
+    
+    if (!syncData || !syncData.action) {
+      console.warn('received invalid sync data:', syncData)
+      return
+    }
+    
+    // add to sync events for user logs
+    console.log('RoomPage: adding sync event to list');
+    setSyncEvents(prev => [...prev, syncData].slice(-100)) // keep only last 100 events
+  }, [])
+  
+  // current username for chat
+  const currentUsername = isGuest && guestName ? guestName : (currentUser?.email?.split('@')[0] || 'User')
 
   // room hook
   const {
     room,
     videoAccess,
-    participants,
     isConnected,
     isLoading,
     error,
     suppressOutgoingSync,
     refreshVideoAccess,
     sendSyncAction,
-    syncVideoToRoom: baseSyncVideoToRoom,
+    sendChatMessage,
+    chatMessages,
+    syncVideoToRoom,
     setVideoElement
   } = useRoom({
     roomId: roomId || '',
     isGuest,
     guestToken: isGuest ? guestToken : undefined,
     guestName: isGuest && guestName ? guestName : undefined,
-    onApplySync: handleApplySync
+    currentUserEmail: currentUser?.email,
+    onSyncEvent: handleSyncEvent
   })
-
-  // wrap syncVideoToRoom to prevent event echo
-  const syncVideoToRoom = useCallback((videoElement: HTMLVideoElement) => {
-    setIsApplyingSync(true)
-    baseSyncVideoToRoom(videoElement)
-    // reset flag after a short delay to allow events to process
-    setTimeout(() => setIsApplyingSync(false), 100)
-  }, [baseSyncVideoToRoom, setIsApplyingSync])
 
   // fetch guest requests for admin users only
   useEffect(() => {
@@ -101,25 +114,16 @@ export default function RoomPage() {
   }, [])
 
   const handlePlay = useCallback(() => {
-    if (isApplyingSync) {
-      return
-    }
     sendSyncAction({ action: 'play' })
-  }, [sendSyncAction, isApplyingSync])
+  }, [sendSyncAction])
 
   const handlePause = useCallback(() => {
-    if (isApplyingSync) {
-      return
-    }
     sendSyncAction({ action: 'pause' })
-  }, [sendSyncAction, isApplyingSync])
+  }, [sendSyncAction])
 
   const handleSeeked = useCallback((time: number) => {
-    if (isApplyingSync) {
-      return
-    }
     sendSyncAction({ action: 'seek', currentTime: time })
-  }, [sendSyncAction, isApplyingSync])
+  }, [sendSyncAction])
 
   // guest request handlers
   const handleGuestRequest = async (requestId: string, approved: boolean) => {
@@ -225,9 +229,6 @@ export default function RoomPage() {
           }}>
             {isConnected ? 'connected' : 'disconnected'}
           </div>
-          <div style={{ color: '#666', fontSize: '0.875em' }}>
-            {participants.length} participant{participants.length !== 1 ? 's' : ''}
-          </div>
         </div>
       </div>
 
@@ -311,43 +312,16 @@ export default function RoomPage() {
         )}
       </div>
 
-      {/* participants list */}
-      <div style={{
-        padding: '1rem',
-        backgroundColor: '#fff',
-        border: '1px solid #e9ecef',
-        borderRadius: '8px'
-      }}>
-        <h3 style={{ margin: '0 0 1rem 0', color: '#333' }}>
-          participants ({participants?.length || 0})
-        </h3>
-        {participants && participants.length > 0 ? (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-            {participants.map((participant) => (
-              <div
-                key={participant.id}
-                style={{
-                  padding: '0.25rem 0.5rem',
-                  backgroundColor: participant.role === 'host' ? '#007bff' : '#6c757d',
-                  color: 'white',
-                  borderRadius: '4px',
-                  fontSize: '0.875em'
-                }}
-              >
-                {participant.name} {participant.role === 'host' && '(host)'}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p style={{ color: '#666', margin: 0 }}>
-            no other participants
-          </p>
-        )}
-
-        {/* guest requests for admin users only */}
-        {!isGuest && guestRequests && guestRequests.length > 0 && authService.getCurrentUser()?.role === 'admin' && (
-          <div style={{ marginTop: '1rem' }}>
-            <h4 style={{ margin: '0 0 0.5rem 0', color: '#333', fontSize: '1em' }}>
+      {/* guest requests for admin users only */}
+      {!isGuest && guestRequests && guestRequests.length > 0 && isAdmin && (
+        <div style={{ 
+          padding: '1rem',
+          backgroundColor: '#fff',
+          border: '1px solid #e9ecef',
+          borderRadius: '8px',
+          marginBottom: '1rem'
+        }}>
+          <h4 style={{ margin: '0 0 0.5rem 0', color: '#333', fontSize: '1em' }}>
               pending guest requests ({guestRequests.length})
             </h4>
             {guestRequests.map((request) => (
@@ -404,9 +378,79 @@ export default function RoomPage() {
           </div>
               </div>
             ))}
-          </div>
-        )}
+        </div>
+      )}
+
+      {/* chat component - always visible */}
+      <div style={{ 
+        marginTop: '1rem',
+        padding: '1rem',
+        backgroundColor: '#fff',
+        border: '1px solid #e9ecef',
+        borderRadius: '8px'
+      }}>
+        <Chat 
+          messages={chatMessages}
+          onSendMessage={sendChatMessage}
+          isConnected={isConnected}
+          currentUsername={currentUsername}
+        />
       </div>
+
+      {/* user logs - admin only */}
+      {isAdmin && (
+        <div style={{ 
+          marginTop: '1rem',
+          padding: '1rem',
+          backgroundColor: '#fff',
+          border: '1px solid #e9ecef',
+          borderRadius: '8px'
+        }}>
+          <div style={{ 
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '1rem'
+          }}>
+            <h3 style={{ margin: 0, color: '#333', fontSize: '1.125em' }}>
+              user logs
+            </h3>
+            <button
+              onClick={() => setShowUserLogs(!showUserLogs)}
+              style={{
+                padding: '0.25rem 0.5rem',
+                backgroundColor: showUserLogs ? '#dc3545' : '#007bff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                fontSize: '0.75em',
+                cursor: 'pointer'
+              }}
+            >
+              {showUserLogs ? 'hide' : 'show'}
+            </button>
+          </div>
+          {showUserLogs && (
+            <UserLogs 
+              isVisible={showUserLogs} 
+              isAdmin={isAdmin}
+              syncEvents={syncEvents.map(syncData => ({
+                id: syncData.user_id || Date.now().toString(),
+                username: syncData.username || 'Unknown User',
+                action: syncData.action,
+                timestamp: syncData.timestamp || new Date().toISOString(),
+                data: {
+                  current_time: syncData.current_time || syncData.data?.current_time,
+                  duration: syncData.data?.duration,
+                  playback_rate: syncData.data?.playback_rate,
+                  is_buffering: syncData.data?.is_buffering,
+                  chat_message: syncData.data?.chat_message
+                }
+              }))}
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 }

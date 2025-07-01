@@ -1,20 +1,21 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { roomService, type Room, type RoomParticipant, type VideoAccess } from '../services/roomService'
+import { roomService, type Room, type VideoAccess } from '../services/roomService'
 import { wsService, type WebSocketMessage, type SyncAction, type BackendRoomState, type BackendSyncMessage } from '../services/webSocketService'
+import type { ChatMessage } from '../types/chat'
 
 export interface UseRoomOptions {
   roomId: string
   isGuest?: boolean
   guestToken?: string
   guestName?: string
-  onApplySync?: (apply: () => void) => void // callback to wrap sync application
+  currentUserEmail?: string // for authenticated users
+  onSyncEvent?: (syncEvent: BackendSyncMessage) => void // callback for sync events (for user logs)
 }
 
 export interface UseRoomReturn {
   // room data
   room: Room | null
   videoAccess: VideoAccess | null
-  participants: RoomParticipant[]
   
   // connection state
   isConnected: boolean
@@ -29,11 +30,15 @@ export interface UseRoomReturn {
   hasReceivedRoomState: boolean // for debugging
   hasAppliedInitialState: boolean // for debugging
   
+  // chat state
+  chatMessages: ChatMessage[]
+  
   // websocket actions
   connect: () => Promise<void>
   disconnect: () => void
   refreshVideoAccess: () => Promise<void>
   sendSyncAction: (action: Omit<SyncAction, 'timestamp' | 'userId' | 'guestName'>) => void
+  sendChatMessage: (message: string) => void
   
   // video sync callback - call this from VideoPlayer to sync to room state
   syncVideoToRoom: (videoElement: HTMLVideoElement) => void
@@ -42,13 +47,15 @@ export interface UseRoomReturn {
   setVideoElement: (videoElement: HTMLVideoElement | null) => void
 }
 
-export function useRoom({ roomId, isGuest = false, guestToken, guestName, onApplySync }: UseRoomOptions): UseRoomReturn {
+export function useRoom({ roomId, isGuest = false, guestToken, guestName, currentUserEmail, onSyncEvent }: UseRoomOptions): UseRoomReturn {
   const [room, setRoom] = useState<Room | null>(null)
   const [videoAccess, setVideoAccess] = useState<VideoAccess | null>(null)
-  const participants = useState<RoomParticipant[]>([])[0] // disabled: const [participants, setParticipants] = useState<RoomParticipant[]>([])
   const [isConnected, setIsConnected] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  
+  // chat state
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   
   // video state - sync state management
   const [isPlaying, setIsPlaying] = useState(false)
@@ -63,6 +70,9 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
   // prevent newly joined users from sending actions until they receive and apply initial room state
   const [suppressOutgoingSync, setSuppressOutgoingSync] = useState(true)
   
+  // ref for immediate suppression during sync application (to prevent echo)
+  const suppressSyncRef = useRef(false)
+  
   // track if we've received initial room state from backend
   const [hasReceivedRoomState, setHasReceivedRoomState] = useState(false)
   
@@ -72,10 +82,36 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
   // ref to video element for real-time sync
   const videoElementRef = useRef<HTMLVideoElement | null>(null)
   
+  // current username - matches what backend generates
+  const currentUsername = isGuest && guestName 
+    ? `${guestName} (Guest)` 
+    : (currentUserEmail?.split('@')[0] || 'User')
+  
   // function to set video element ref
   const setVideoElement = useCallback((videoElement: HTMLVideoElement | null) => {
     videoElementRef.current = videoElement
   }, [])
+
+  // chat functions
+  const sendChatMessage = useCallback((message: string) => {
+    if (!isConnected) {
+      console.warn('not connected to room, cannot send chat message')
+      return
+    }
+    
+    // optimistically add chat message to local state immediately
+    const optimisticChatMessage: ChatMessage = {
+      id: Date.now().toString(),
+      room_id: roomId,
+      user_id: 'current-user', // placeholder for current user
+      username: currentUsername, // use actual username for proper identification
+      message: message.trim(),
+      timestamp: new Date().toISOString()
+    }
+    setChatMessages(prev => [...prev, optimisticChatMessage])
+    
+    wsService.sendChatMessage(message)
+  }, [isConnected, roomId, currentUsername])
   
 
 
@@ -171,6 +207,7 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
     console.log('attempting to send sync action:', action, { 
       isConnected, 
       suppressOutgoingSync, 
+      suppressSyncRef: suppressSyncRef.current,
       hasReceivedRoomState, 
       hasAppliedInitialState 
     })
@@ -180,7 +217,8 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
       return
     }
     
-    if (suppressOutgoingSync) {
+    // check both state and ref for suppression
+    if (suppressOutgoingSync || suppressSyncRef.current) {
       console.log('not sending sync action - suppressed during initial sync phase')
       return
     }
@@ -215,6 +253,31 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
         if ((message.payload || message.data) && typeof (message.payload || message.data) === 'object') {
           const syncData = (message.payload || message.data) as BackendSyncMessage
           
+          // notify parent component about sync events for user logs
+          if (onSyncEvent) {
+            console.log('useRoom: sending sync event to UserLogs:', {
+              action: syncData.action,
+              username: syncData.username,
+              currentUsername: currentUsername,
+              isFromCurrentUser: syncData.username === currentUsername
+            })
+            onSyncEvent(syncData)
+          }
+          
+          // handle chat messages from sync events
+          if (syncData.action === 'chat' && syncData.data?.chat_message) {
+            const chatMessage: ChatMessage = {
+              id: syncData.user_id || Date.now().toString(),
+              room_id: roomId, // use current room ID
+              user_id: syncData.user_id || '',
+              username: syncData.username || 'Unknown User',
+              message: syncData.data.chat_message,
+              timestamp: syncData.timestamp || new Date().toISOString()
+            }
+            console.log('received chat sync message:', chatMessage)
+            setChatMessages(prev => [...prev, chatMessage])
+          }
+          
           console.log('processing sync message:', syncData, { 
             suppressOutgoingSync, 
             hasInitialSync, 
@@ -233,14 +296,20 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
           console.log('video element for sync:', { 
             hasVideoElement: !!videoElement,
             videoSrc: videoElement?.src,
-            readyState: videoElement?.readyState,
-            hasOnApplySync: !!onApplySync
+            readyState: videoElement?.readyState
           })
           
           if (videoElement) {
             console.log('video element available, preparing sync action')
             const applySyncAction = () => {
               console.log('EXECUTING applySyncAction for:', syncData.action)
+              
+              // temporarily suppress outgoing sync to prevent echo
+              const originalSuppress = suppressOutgoingSync
+              const originalSuppressRef = suppressSyncRef.current
+              setSuppressOutgoingSync(true)
+              suppressSyncRef.current = true
+              
               try {
                 console.log('applying sync action to video:', syncData.action, { 
                   currentTime: videoElement.currentTime, 
@@ -404,21 +473,21 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
                 
               } catch (error) {
                 console.error('error applying real-time sync:', error)
+              } finally {
+                // restore original suppress state after a short delay to allow video events to settle
+                setTimeout(() => {
+                  setSuppressOutgoingSync(originalSuppress)
+                  suppressSyncRef.current = originalSuppressRef
+                }, 100)
               }
             }
             
-            console.log('about to call onApplySync or applySyncAction directly')
-            if (onApplySync) {
-              console.log('calling onApplySync wrapper')
-              onApplySync(applySyncAction)
+            console.log('applying sync action directly')
+            // ensure video element still exists before applying sync
+            if (videoElementRef.current) {
+              applySyncAction()
             } else {
-              console.log('calling applySyncAction directly')
-              // ensure video element still exists before applying sync
-              if (videoElementRef.current) {
-                applySyncAction()
-              } else {
-                console.warn('video element no longer available, cannot apply sync action')
-              }
+              console.warn('video element no longer available, cannot apply sync action')
             }
           } else {
             console.warn('no video element available for sync action:', syncData.action)
@@ -481,7 +550,13 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
         }
         break
         
-      case 'participants':
+      case 'chat':
+        // handle incoming chat messages
+        if (message.payload && typeof message.payload === 'object') {
+          const chatMessage = message.payload as ChatMessage
+          console.log('received chat message:', chatMessage)
+          setChatMessages(prev => [...prev, chatMessage])
+        }
         break
       case 'guest_request':
         break
@@ -492,7 +567,7 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
       case 'error':
         break
     }
-  }, [onApplySync, hasInitialSync, suppressOutgoingSync, isGuest, setSuppressOutgoingSync, hasAppliedInitialState, setHasAppliedInitialState])
+  }, [onSyncEvent, hasInitialSync, suppressOutgoingSync, isGuest, setSuppressOutgoingSync, hasAppliedInitialState, setHasAppliedInitialState, roomId, currentUsername])
 
   // helper function to apply room state to video element
   const applyRoomStateToVideo = useCallback((videoElement: HTMLVideoElement) => {
@@ -602,9 +677,9 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
     // set up message handlers
     wsService.on('sync', handleWebSocketMessage)
     wsService.on('state', handleWebSocketMessage)
-    wsService.on('participants', handleWebSocketMessage)
     wsService.on('guest_request', handleWebSocketMessage)
     wsService.on('request_state', handleWebSocketMessage)
+    wsService.on('chat', handleWebSocketMessage)
     wsService.on('connected', connectHandler)
     wsService.on('disconnected', disconnectHandler)
     wsService.on('error', errorHandler)
@@ -613,9 +688,9 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
       // cleanup event handlers
       wsService.off('sync', handleWebSocketMessage)
       wsService.off('state', handleWebSocketMessage)
-      wsService.off('participants', handleWebSocketMessage)
       wsService.off('guest_request', handleWebSocketMessage)
       wsService.off('request_state', handleWebSocketMessage)
+      wsService.off('chat', handleWebSocketMessage)
       wsService.off('connected', connectHandler)
       wsService.off('disconnected', disconnectHandler)
       wsService.off('error', errorHandler)
@@ -648,7 +723,6 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
   return {
     room,
     videoAccess,
-    participants,
     isConnected,
     isLoading,
     error,
@@ -658,11 +732,13 @@ export function useRoom({ roomId, isGuest = false, guestToken, guestName, onAppl
     suppressOutgoingSync, // for debugging
     hasReceivedRoomState, // for debugging
     hasAppliedInitialState, // for debugging
+    chatMessages,
     // websocket functions
     connect,
     disconnect,
     refreshVideoAccess,
     sendSyncAction,
+    sendChatMessage,
     syncVideoToRoom,
     setVideoElement
   }

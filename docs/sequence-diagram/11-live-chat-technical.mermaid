@@ -1,0 +1,54 @@
+sequenceDiagram
+    participant U as User (Guest/Auth)
+    participant Chat as Chat Component
+    participant RP as RoomPage
+    participant WS as WebSocket Service
+    participant SS as Sync Service
+    participant Redis as Redis
+
+    Note over U, Redis: Live Chat Technical Implementation
+
+    %% User Sends Message
+    U->>Chat: Types message and submits
+    Chat->>RP: sendChatMessage(messageText)
+    RP->>WS: sendChatMessage(messageText)
+    
+    %% WebSocket Message Format
+    WS->>SS: JSON: {type: "chat", message: "Hello everyone!"}
+    Note right of WS: Chat message format<br/>(has "type" field)
+    
+    %% Backend Processing
+    SS->>SS: handleChatMessageFromWebSocket()
+    SS->>SS: Create SyncMessage with ActionChat
+    SS->>SS: HandleChatMessage() - process chat
+    
+    %% Broadcasting to All Users
+    SS->>Redis: PublishEvent(roomID, chatSyncMessage)
+    Redis-->>SS: Event delivered to all instances
+    SS->>SS: broadcastSyncToRoom()
+    
+    %% Real-time Message Delivery
+    loop For each connected user
+        SS->>WS: WebSocket sync message
+        Note right of SS: {<br/>  type: "sync",<br/>  payload: {<br/>    action: "chat",<br/>    username: "user",<br/>    data: {chat_message: "text"}<br/>  }<br/>}
+        WS->>RP: handleWebSocketMessage()
+        RP->>RP: Process chat sync event
+        RP->>Chat: Update chatMessages state
+        Chat->>Chat: Add message to display
+        Chat->>U: Show new chat message
+    end
+    
+    %% Message Structure in Frontend
+    Note over Chat: ChatMessage Interface:<br/>{<br/>  id: string,<br/>  username: string,<br/>  message: string,<br/>  timestamp: string,<br/>  isGuest?: boolean<br/>}
+    
+    %% Guest vs Authenticated User Handling
+    alt Guest User
+        Note over Chat: Color: guest-bubble (#e3f2fd)
+        Chat->>Chat: Apply guest styling
+    else Authenticated User
+        Note over Chat: Color: auth-bubble (#f3e5f5)
+        Chat->>Chat: Apply auth user styling
+    end
+    
+    %% Persistence Note
+    Note over SS: Chat messages are NOT persisted<br/>Only real-time delivery<br/>New users don't see chat history

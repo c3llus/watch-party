@@ -12,6 +12,7 @@ type ControllerProvider interface {
 	RegisterUser(c *gin.Context)
 	Login(c *gin.Context)
 	Logout(c *gin.Context)
+	GetProfile(c *gin.Context)
 }
 
 // controller implements the controller interface
