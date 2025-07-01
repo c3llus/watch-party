@@ -1,0 +1,172 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (semantic)'
+        required: true
+        type: string
+      branch:
+        description: 'Branch to release from'
+        required: true
+        default: 'main'
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0 
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.4'
+          cache-dependency-path: backend/go.sum
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ./frontend
+        run: npm run build
+
+      - name: Copy frontend to standalone directory
+        run: |
+          rm -rf backend/standalone/frontend-dist
+          cp -r frontend/dist backend/standalone/frontend-dist
+
+      - name: Install Go dependencies
+        working-directory: ./backend
+        run: go mod tidy
+
+      - name: Build Linux AMD64
+        working-directory: ./backend
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: go build -ldflags="-s -w" -o standalone/watch-party-standalone-linux-amd64 ./standalone/
+
+      - name: Build Windows AMD64
+        working-directory: ./backend
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: go build -ldflags="-s -w" -o standalone/watch-party-standalone-windows-amd64.exe ./standalone/
+
+      - name: Build macOS AMD64
+        working-directory: ./backend
+        env:
+          GOOS: darwin
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: go build -ldflags="-s -w" -o standalone/watch-party-standalone-macos-amd64 ./standalone/
+
+      - name: Build macOS ARM64
+        working-directory: ./backend
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: go build -ldflags="-s -w" -o standalone/watch-party-standalone-macos-arm64 ./standalone/
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the previous tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "## Changes" > CHANGELOG.md
+            echo "This is the first release." >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "### All commits:" >> CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" >> CHANGELOG.md
+          else
+            echo "## Changes since $PREVIOUS_TAG" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            
+            # Get commits since last tag
+            COMMITS=$(git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..HEAD)
+            if [ -z "$COMMITS" ]; then
+              echo "No new commits since $PREVIOUS_TAG" >> CHANGELOG.md
+            else
+              echo "$COMMITS" >> CHANGELOG.md
+            fi
+          fi
+          
+          echo "" >> CHANGELOG.md
+          echo "## Downloads" >> CHANGELOG.md
+          echo "- **Linux AMD64**: \`watch-party-standalone-linux-amd64\`" >> CHANGELOG.md
+          echo "- **Windows AMD64**: \`watch-party-standalone-windows-amd64.exe\`" >> CHANGELOG.md
+          echo "- **macOS AMD64**: \`watch-party-standalone-macos-amd64\`" >> CHANGELOG.md
+          echo "- **macOS ARM64**: \`watch-party-standalone-macos-arm64\`" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "## Installation" >> CHANGELOG.md
+          echo "1. Download the appropriate binary for your platform" >> CHANGELOG.md
+          echo "2. Make it executable (Linux/macOS): \`chmod +x watch-party-standalone-*\`" >> CHANGELOG.md
+          echo "3. Run: \`./watch-party-standalone-*\`" >> CHANGELOG.md
+          echo "4. Access the application at: http://localhost:3000" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "## Features" >> CHANGELOG.md
+          echo "- Embedded PostgreSQL database" >> CHANGELOG.md
+          echo "- Embedded Redis cache" >> CHANGELOG.md
+          echo "- Embedded MinIO storage" >> CHANGELOG.md
+          echo "- React frontend" >> CHANGELOG.md
+          echo "- API and Sync services" >> CHANGELOG.md
+          echo "- Single executable deployment" >> CHANGELOG.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: Watch Party ${{ inputs.tag }}
+          body_path: CHANGELOG.md
+          prerelease: ${{ inputs.prerelease }}
+          files: |
+            backend/standalone/watch-party-standalone-linux-amd64
+            backend/standalone/watch-party-standalone-windows-amd64.exe
+            backend/standalone/watch-party-standalone-macos-amd64
+            backend/standalone/watch-party-standalone-macos-arm64
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Display build info
+        run: |
+          echo "Release ${{ inputs.tag }} created successfully!"
+          echo ""
+          echo "Built binaries:"
+          ls -la backend/standalone/watch-party-standalone-*
+          echo ""
+          echo "Binary sizes:"
+          cd backend/standalone
+          for binary in watch-party-standalone-*; do
+            if [ -f "$binary" ]; then
+              size=$(du -h "$binary" | cut -f1)
+              echo "   $binary: $size"
+            fi
+          done
